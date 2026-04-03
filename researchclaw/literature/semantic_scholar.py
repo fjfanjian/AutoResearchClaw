@@ -31,7 +31,7 @@ from researchclaw.literature.models import Author, Paper
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+_BASE_URL = "https://ai4scholar.net/graph/v1/paper/search"
 _FIELDS = "paperId,title,abstract,year,venue,citationCount,authors,externalIds,url"
 _MAX_PER_REQUEST = 100
 _RATE_LIMIT_SEC = 1.5  # conservative spacing between requests
@@ -264,7 +264,7 @@ def _request_with_retry(
     return None
 
 
-_BATCH_URL = "https://api.semanticscholar.org/graph/v1/paper/batch"
+_BATCH_URL = "https://ai4scholar.net/graph/v1/paper/batch"
 _BATCH_MAX = 500  # S2 batch endpoint max
 
 

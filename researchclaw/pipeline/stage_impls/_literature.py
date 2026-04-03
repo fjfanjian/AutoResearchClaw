@@ -163,7 +163,7 @@ def _execute_search_strategy(
                 "id": "semantic_scholar",
                 "name": "Semantic Scholar",
                 "type": "api",
-                "url": "https://api.semanticscholar.org/graph/v1/paper/search",
+                "url": "https://ai4scholar.net/graph/v1/paper/search",
                 "status": "available",
                 "query": topic,
                 "verified_at": _utcnow_iso(),
