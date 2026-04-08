@@ -267,6 +267,7 @@ class DockerSandboxConfig:
     shm_size_mb: int = 2048
     container_python: str = "/usr/bin/python3"
     keep_containers: bool = False
+    volumes: tuple[tuple[str, str], ...] = ()  # additional host:container mounts
 
 
 @dataclass(frozen=True)

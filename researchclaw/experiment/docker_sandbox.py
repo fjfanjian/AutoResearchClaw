@@ -390,6 +390,11 @@ class DockerSandbox:
             f"--shm-size={cfg.shm_size_mb}m",
         ]
 
+        # --- Additional volume mounts from config ---
+        if cfg.volumes:
+            for host_path, container_path in cfg.volumes:
+                cmd.extend(["-v", f"{host_path}:{container_path}"])
+
         # --- Network policy ---
         # On POSIX, run the container as the host user so that files
         # written to the bind-mounted volume are owned by the caller.

@@ -1,3 +1,15 @@
+---
+name: researchclaw
+description: "Run ResearchClaw's 23-stage autonomous research pipeline. Given a research topic, this skill orchestrates the entire research workflow: literature review, hypothesis generation, experiment design, code generation and execution, result analysis, paper writing, peer review, and final export."
+metadata:
+  category: research
+  trigger-keywords: "research,paper,investigate,researchclaw,autonomous"
+  applicable-stages: "1-23"
+  priority: "1"
+  version: "1.0"
+  author: researchclaw
+---
+
 # ResearchClaw — Autonomous Research Pipeline Skill
 
 ## Description

@@ -41,15 +41,15 @@ RUN python3 -m pip install \
         sentencepiece protobuf tokenizers safetensors \
         evaluate rouge-score
 
-# Pre-cache standard datasets for offline use
-RUN mkdir -p /opt/datasets && \
-    python3 -c "import torchvision; torchvision.datasets.CIFAR10(root='/opt/datasets', train=True, download=True); torchvision.datasets.CIFAR10(root='/opt/datasets', train=False, download=True)" && \
-    python3 -c "import torchvision; torchvision.datasets.CIFAR100(root='/opt/datasets', train=True, download=True); torchvision.datasets.CIFAR100(root='/opt/datasets', train=False, download=True)" && \
-    python3 -c "import torchvision; torchvision.datasets.FashionMNIST(root='/opt/datasets', train=True, download=True); torchvision.datasets.FashionMNIST(root='/opt/datasets', train=False, download=True)" && \
-    python3 -c "import torchvision; torchvision.datasets.MNIST(root='/opt/datasets', train=True, download=True); torchvision.datasets.MNIST(root='/opt/datasets', train=False, download=True)" && \
-    python3 -c "import torchvision; torchvision.datasets.STL10(root='/opt/datasets', split='train', download=True); torchvision.datasets.STL10(root='/opt/datasets', split='test', download=True)" && \
-    python3 -c "import torchvision; torchvision.datasets.SVHN(root='/opt/datasets', split='train', download=True); torchvision.datasets.SVHN(root='/opt/datasets', split='test', download=True)" && \
-    chmod -R a+r /opt/datasets
+# # Pre-cache standard datasets for offline use
+# RUN mkdir -p /opt/datasets && \
+#     python3 -c "import torchvision; torchvision.datasets.CIFAR10(root='/opt/datasets', train=True, download=True); torchvision.datasets.CIFAR10(root='/opt/datasets', train=False, download=True)" && \
+#     python3 -c "import torchvision; torchvision.datasets.CIFAR100(root='/opt/datasets', train=True, download=True); torchvision.datasets.CIFAR100(root='/opt/datasets', train=False, download=True)" && \
+#     python3 -c "import torchvision; torchvision.datasets.FashionMNIST(root='/opt/datasets', train=True, download=True); torchvision.datasets.FashionMNIST(root='/opt/datasets', train=False, download=True)" && \
+#     python3 -c "import torchvision; torchvision.datasets.MNIST(root='/opt/datasets', train=True, download=True); torchvision.datasets.MNIST(root='/opt/datasets', train=False, download=True)" && \
+#     python3 -c "import torchvision; torchvision.datasets.STL10(root='/opt/datasets', split='train', download=True); torchvision.datasets.STL10(root='/opt/datasets', split='test', download=True)" && \
+#     python3 -c "import torchvision; torchvision.datasets.SVHN(root='/opt/datasets', split='train', download=True); torchvision.datasets.SVHN(root='/opt/datasets', split='test', download=True)" && \
+#     chmod -R a+r /opt/datasets
 
 # Non-root user for security
 RUN groupadd -r researcher && useradd -r -g researcher -m -s /bin/bash researcher
