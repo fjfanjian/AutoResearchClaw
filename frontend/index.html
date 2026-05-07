@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoResearchClaw — Web UI</title>
+  <link rel="icon" href="/static/assets/logo.png" type="image/png" onerror="this.remove()">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <span class="sidebar-logo">🦞</span>
+      <span class="sidebar-title">ResearchClaw</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-view="dashboard">
+        <span class="nav-icon">🏠</span> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-view="pipeline">
+        <span class="nav-icon">⚙️</span> Pipeline
+      </a>
+      <a href="#" class="nav-item" data-view="runs">
+        <span class="nav-icon">📋</span> Run History
+      </a>
+      <a href="#" class="nav-item" data-view="chat">
+        <span class="nav-icon">💬</span> Chat
+      </a>
+    </nav>
+
+    <div class="sidebar-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label">Connecting…</span>
+    </div>
+  </aside>
+
+  <!-- ===== Main ===== -->
+  <div class="main-wrapper">
+    <!-- Top bar -->
+    <header class="topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
+      <h1 class="topbar-title" id="page-title">Dashboard</h1>
+      <div class="topbar-meta" id="topbar-meta"></div>
+    </header>
+
+    <main class="main-content" id="main-content">
+      <!-- Dynamically rendered by app.js -->
+    </main>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
