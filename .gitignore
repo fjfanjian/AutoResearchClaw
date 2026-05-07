@@ -67,6 +67,9 @@ image/logo_prompt.md
 
 run.log
 
+# Pipeline output archives (extracted run artifacts)
+rc-*_extracted.tar.gz
+
 # Misc temp files
 .history/
 .serena/
