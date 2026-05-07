@@ -86,9 +86,11 @@ def create_app(
     # --- Routes ---
     from researchclaw.server.routes.pipeline import router as pipeline_router
     from researchclaw.server.routes.projects import router as projects_router
+    from researchclaw.server.routes.artifacts import router as artifacts_router
 
     app.include_router(pipeline_router)
     app.include_router(projects_router)
+    app.include_router(artifacts_router)
 
     if not dashboard_only:
         from researchclaw.server.routes.chat import router as chat_router, set_chat_manager
@@ -117,8 +119,22 @@ def create_app(
         except WebSocketDisconnect:
             event_manager.disconnect(client_id)
 
+    # --- HITL WebSocket ---
+    from researchclaw.hitl.adapters.ws_adapter import WebSocketHITLAdapter
+
+    @app.websocket("/ws/hitl/{run_id}")
+    async def hitl_ws(websocket: WebSocket, run_id: str) -> None:
+        """HITL bidirectional interaction channel."""
+        await websocket.accept()
+        adapter = WebSocketHITLAdapter(
+            ws=websocket,
+            artifacts_dir=Path("artifacts"),
+            run_id=run_id,
+        )
+        await adapter.run()
+
     # --- Static files (frontend) ---
-    frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
+    frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
     if frontend_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
@@ -127,6 +143,10 @@ def create_app(
 
         @app.get("/")
         async def index() -> FileResponse:
+            return FileResponse(str(frontend_dir / "index.html"))
+
+        @app.get("/{path:path}")
+        async def spa_fallback(path: str) -> FileResponse:
             return FileResponse(str(frontend_dir / "index.html"))
 
     # --- Background tasks ---

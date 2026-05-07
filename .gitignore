@@ -85,7 +85,9 @@ cli_pause
 config_*.yaml
 
 # Frontend (local dev only)
-frontend/
+frontend/node_modules/
+frontend/.vite/
+frontend/*.local
 
 # Test outputs and run logs (local only)
 test_outputs*/
