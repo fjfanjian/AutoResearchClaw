@@ -23,7 +23,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from researchclaw.pipeline._helpers import (
+    _extract_code_block,
+    _extract_multi_file_blocks,
+)
+
 logger = logging.getLogger(__name__)
+
+# Regex for extracting ```filename:xxx blocks from ACP responses
+_FILENAME_BLOCK_RE = re.compile(
+    r"```(?:python\s+)?filename:(\S+)\s*\n(.*?)```",
+    flags=re.DOTALL,
+)
 
 # ---------------------------------------------------------------------------
 # Complexity scoring
@@ -270,6 +281,7 @@ class OpenCodeBridge:
         timeout_sec: int = 600,
         max_retries: int = 1,
         workspace_cleanup: bool = True,
+        llm: Any | None = None,
     ) -> None:
         self._model = model
         self._llm_base_url = llm_base_url
@@ -278,16 +290,19 @@ class OpenCodeBridge:
         self._timeout_sec = timeout_sec
         self._max_retries = max_retries
         self._workspace_cleanup = workspace_cleanup
+        self._llm = llm
 
     # -- availability check ---------------------------------------------------
 
-    @staticmethod
-    def check_available() -> bool:
-        """Return True if the ``opencode`` CLI is installed and callable."""
+    def check_available(self) -> bool:
+        """Return True if an ACP/LLM client is available or the ``opencode`` CLI is installed."""
+        if self._llm is not None:
+            return True
+
         opencode_cmd = shutil.which("opencode")
         if not opencode_cmd:
             return False
-            
+
         try:
             result = subprocess.run(
                 [opencode_cmd, "--version"],
@@ -449,6 +464,40 @@ class OpenCodeBridge:
             return self._model
         return f"openai/{self._model}"
 
+    # -- ACP invocation -------------------------------------------------------
+
+    def _invoke_acp(
+        self,
+        workspace: Path,
+        prompt: str,
+    ) -> tuple[bool, str, float]:
+        """Send prompt via the configured ACP/LLM client. Returns (success, log, elapsed)."""
+        env = os.environ.copy()
+        if self._api_key_env:
+            api_key = os.environ.get(self._api_key_env, "")
+            if api_key:
+                env["OPENAI_API_KEY"] = api_key
+
+        t0 = time.monotonic()
+        try:
+            system = (
+                "You are an expert ML research engineer implementing a complete, "
+                "runnable experiment. Read the context files in the workspace and "
+                "produce ALL requested files. No placeholders or TODOs."
+            )
+            resp = self._llm.chat(
+                [{"role": "user", "content": prompt}],
+                system=system,
+            )
+            elapsed = time.monotonic() - t0
+            return True, resp.content, elapsed
+        except subprocess.TimeoutExpired as exc:
+            elapsed = time.monotonic() - t0
+            return False, f"ACP prompt timed out after {elapsed:.1f}s", elapsed
+        except Exception as exc:  # noqa: BLE001
+            elapsed = time.monotonic() - t0
+            return False, f"ACP prompt failed: {exc}", elapsed
+
     # -- invocation ------------------------------------------------------------
 
     def _invoke_opencode(
@@ -532,6 +581,28 @@ class OpenCodeBridge:
             if p.exists() and extra not in files:
                 files[extra] = p.read_text(encoding="utf-8", errors="replace")
 
+        return files
+
+    # -- response file extraction (ACP path) ----------------------------------
+
+    @staticmethod
+    def _extract_response_files(content: str) -> dict[str, str]:
+        """Extract ```filename:xxx blocks, allowing any safe filename.
+
+        Unlike ``_extract_multi_file_blocks`` this does NOT restrict to
+        ``.py`` files so that ``requirements.txt`` and ``setup.py`` survive.
+        Falls back to a single ``main.py`` block if no filename markers exist.
+        """
+        files: dict[str, str] = {}
+        for fname, code in _FILENAME_BLOCK_RE.findall(content):
+            fname = fname.strip().replace("\\", "/").split("/")[-1]
+            if ".." in fname or not fname or fname.startswith("/"):
+                continue
+            files[fname] = code.strip()
+        if not files:
+            block = _extract_code_block(content)
+            if block.strip():
+                files["main.py"] = block
         return files
 
     # -- entry-point validation ------------------------------------------------
@@ -683,17 +754,28 @@ class OpenCodeBridge:
                 "{time_budget_sec}", str(time_budget_sec)
             )
 
-            logger.info(
-                "Beast mode: invoking OpenCode (attempt %d/%d, timeout=%ds)",
-                attempt + 1,
-                1 + self._max_retries,
-                self._timeout_sec,
-            )
-
-            success, log, elapsed = self._invoke_opencode(workspace, prompt)
+            if self._llm is not None:
+                logger.info(
+                    "Beast mode: invoking ACP (attempt %d/%d, timeout=%ds)",
+                    attempt + 1,
+                    1 + self._max_retries,
+                    self._timeout_sec,
+                )
+                success, log, elapsed = self._invoke_acp(workspace, prompt)
+            else:
+                logger.info(
+                    "Beast mode: invoking OpenCode (attempt %d/%d, timeout=%ds)",
+                    attempt + 1,
+                    1 + self._max_retries,
+                    self._timeout_sec,
+                )
+                success, log, elapsed = self._invoke_opencode(workspace, prompt)
 
             if success:
-                files = self._collect_files(workspace)
+                if self._llm is not None:
+                    files = self._extract_response_files(log)
+                else:
+                    files = self._collect_files(workspace)
                 if "main.py" not in files:
                     logger.warning(
                         "Beast mode: OpenCode succeeded but no main.py found "

@@ -627,25 +627,26 @@ def _get_repaired_code(
     """
     repair_cfg = config.experiment.repair
 
-    # Try OpenCode first if enabled
+    # Try ACP/OpenCode bridge first if enabled
     if repair_cfg.use_opencode and config.experiment.opencode.enabled:
-        result = _repair_via_opencode(repair_prompt, current_code, config, run_dir, cycle)
+        result = _repair_via_acp(repair_prompt, current_code, llm, config, run_dir, cycle)
         if result:
             return result
-        logger.info("OpenCode repair unavailable, falling back to LLM")
+        logger.info("ACP/OpenCode repair unavailable, falling back to LLM")
 
     # LLM repair
     return _repair_via_llm(repair_prompt, current_code, llm)
 
 
-def _repair_via_opencode(
+def _repair_via_acp(
     repair_prompt: str,
     current_code: dict[str, str],
+    llm: Any,
     config: Any,
     run_dir: Path,
     cycle: int,
 ) -> dict[str, str] | None:
-    """Attempt repair via OpenCode agent."""
+    """Attempt repair via ACP/OpenCode bridge. Prefers ACP when ``llm`` is available."""
     try:
         from researchclaw.pipeline.opencode_bridge import OpenCodeBridge
 
@@ -658,6 +659,7 @@ def _repair_via_opencode(
             timeout_sec=getattr(_oc_cfg, "timeout_sec", 600),
             max_retries=getattr(_oc_cfg, "max_retries", 1),
             workspace_cleanup=getattr(_oc_cfg, "workspace_cleanup", True),
+            llm=llm,
         )
         workspace = run_dir / f"_repair_opencode_v{cycle}"
         workspace.mkdir(parents=True, exist_ok=True)

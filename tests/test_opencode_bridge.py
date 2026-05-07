@@ -133,7 +133,7 @@ class TestOpenCodeBridge:
             "researchclaw.pipeline.opencode_bridge.shutil.which",
             return_value=None,
         ):
-            assert OpenCodeBridge.check_available() is False
+            assert OpenCodeBridge().check_available() is False
 
     def test_check_available_returns_false_on_timeout(self):
         with patch(
@@ -143,7 +143,7 @@ class TestOpenCodeBridge:
             "researchclaw.pipeline.opencode_bridge.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="opencode", timeout=15),
         ):
-            assert OpenCodeBridge.check_available() is False
+            assert OpenCodeBridge().check_available() is False
 
     def test_check_available_returns_true(self):
         mock_result = MagicMock()
@@ -155,7 +155,7 @@ class TestOpenCodeBridge:
             "researchclaw.pipeline.opencode_bridge.subprocess.run",
             return_value=mock_result,
         ) as run_mock:
-            assert OpenCodeBridge.check_available() is True
+            assert OpenCodeBridge().check_available() is True
         assert run_mock.call_args.args[0][0].endswith("opencode.cmd")
 
     def test_workspace_creates_correct_files(self, tmp_path):
@@ -382,6 +382,83 @@ class TestOpenCodeBridge:
 
         assert success is True
         assert run_mock.call_args.args[0][0].endswith("opencode.cmd")
+
+
+# ============================================================
+# TestACPPath
+# ============================================================
+
+
+class TestACPPath:
+    """Tests for ACP (Claude Code) bypass of the opencode CLI."""
+
+    def test_check_available_true_when_llm_present(self):
+        mock_llm = MagicMock()
+        bridge = OpenCodeBridge(llm=mock_llm)
+        # Should report available even when opencode CLI is absent
+        with patch("researchclaw.pipeline.opencode_bridge.shutil.which", return_value=None):
+            assert bridge.check_available() is True
+
+    def test_generate_success_via_acp(self, tmp_path):
+        mock_llm = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.content = """
+```filename:main.py
+print('acc: 0.95')
+```
+
+```filename:requirements.txt
+torch>=2.0
+```
+"""
+        mock_llm.chat.return_value = mock_resp
+
+        bridge = OpenCodeBridge(llm=mock_llm, max_retries=0, workspace_cleanup=True)
+        result = bridge.generate(
+            stage_dir=tmp_path,
+            topic="test",
+            exp_plan="plan",
+            metric="acc",
+        )
+        assert result.success is True
+        assert "main.py" in result.files
+        assert "requirements.txt" in result.files
+        assert "acc: 0.95" in result.files["main.py"]
+
+    def test_generate_acp_single_block_fallback(self, tmp_path):
+        mock_llm = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.content = """
+```python
+import torch
+print('acc: 0.95')
+```
+"""
+        mock_llm.chat.return_value = mock_resp
+
+        bridge = OpenCodeBridge(llm=mock_llm, max_retries=0, workspace_cleanup=True)
+        result = bridge.generate(
+            stage_dir=tmp_path,
+            topic="test",
+            exp_plan="plan",
+            metric="acc",
+        )
+        assert result.success is True
+        assert result.files.get("main.py", "").startswith("import torch")
+
+    def test_generate_acp_failure(self, tmp_path):
+        mock_llm = MagicMock()
+        mock_llm.chat.side_effect = RuntimeError("ACP session timeout")
+
+        bridge = OpenCodeBridge(llm=mock_llm, max_retries=0, workspace_cleanup=True)
+        result = bridge.generate(
+            stage_dir=tmp_path,
+            topic="test",
+            exp_plan="plan",
+            metric="acc",
+        )
+        assert result.success is False
+        assert "ACP prompt failed" in result.opencode_log
 
 
 # ============================================================
