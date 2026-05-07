@@ -86,9 +86,11 @@ def create_app(
     # --- Routes ---
     from researchclaw.server.routes.pipeline import router as pipeline_router
     from researchclaw.server.routes.projects import router as projects_router
+    from researchclaw.server.routes.artifacts import router as artifacts_router
 
     app.include_router(pipeline_router)
     app.include_router(projects_router)
+    app.include_router(artifacts_router)
 
     if not dashboard_only:
         from researchclaw.server.routes.chat import router as chat_router, set_chat_manager
@@ -117,12 +119,39 @@ def create_app(
         except WebSocketDisconnect:
             event_manager.disconnect(client_id)
 
+    # --- HITL WebSocket endpoint ---
+    @app.websocket("/ws/hitl/{run_id}")
+    async def hitl_ws(websocket: WebSocket, run_id: str) -> None:
+        """Bidirectional HITL interaction channel for a specific run."""
+        from researchclaw.server.routes.artifacts import _RUN_ID_RE as _HITL_RUN_ID_RE
+        if not _HITL_RUN_ID_RE.fullmatch(run_id):
+            await websocket.close(code=1008, reason="Invalid run_id")
+            return
+
+        await websocket.accept()
+        from researchclaw.hitl.adapters.ws_adapter import WebSocketHITLAdapter
+
+        adapter = WebSocketHITLAdapter(
+            ws=websocket,
+            artifacts_dir=Path("artifacts"),
+            run_id=run_id,
+        )
+        try:
+            await adapter.run()
+        except Exception:
+            pass
+
     # --- Static files (frontend) ---
-    frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
+    frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
     if frontend_dir.is_dir():
+        # Serve assets (JS/CSS/fonts) under /assets/
+        assets_dir = frontend_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
         app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
-        # Serve index.html at root
+        # Serve index.html at root and any other non-API path
         from fastapi.responses import FileResponse
 
         @app.get("/")
