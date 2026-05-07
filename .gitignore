@@ -84,8 +84,9 @@ cli_pause
 
 config_*.yaml
 
-# Frontend (local dev only)
-frontend/
+# Frontend (local dev only) — ignore build output and node_modules
+frontend/node_modules/
+frontend/dist/
 
 # Test outputs and run logs (local only)
 test_outputs*/

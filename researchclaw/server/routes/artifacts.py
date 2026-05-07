@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 import re as _re
 
-_RUN_ID_RE = _re.compile(r"^rc-\d{8}-\d{6}-[a-f0-9]+$")
+_RUN_ID_RE = _re.compile(r"^rc-(\d{8})-(\d{6})-([a-f0-9]+)$")
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +26,45 @@ _MAX_INLINE_BYTES = 2 * 1024 * 1024
 
 
 def _validated_run_dir(run_id: str) -> Path:
-    """Validate run_id format and return the run directory path."""
-    if not _RUN_ID_RE.match(run_id):
-        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}")
-    run_dir = _ARTIFACTS_ROOT / run_id
+    """Validate run_id format and return the run directory path.
+
+    Reconstructs the run directory path from regex capture groups so the
+    resulting path contains only the expected characters and cannot contain
+    directory traversal sequences.
+    """
+    m = _RUN_ID_RE.fullmatch(run_id)
+    if not m:
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
+    # Reconstruct from captured groups — guarantees only digits and hex chars
+    safe_run_id = f"rc-{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    run_dir = _ARTIFACTS_ROOT / safe_run_id
+    # Belt-and-suspenders: ensure the resolved path is still under artifacts/
+    artifacts_root = _ARTIFACTS_ROOT.resolve()
     resolved = run_dir.resolve()
-    try:
-        resolved.relative_to(_ARTIFACTS_ROOT.resolve())
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid run_id: {run_id}")
+    if not str(resolved).startswith(str(artifacts_root) + "/"):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
     return run_dir
+
+
+def _safe_child_path(base: Path, user_path: str) -> Path:
+    """Return a path within *base* for the user-supplied relative path.
+
+    Rejects attempts to escape the base directory.  Raises HTTPException on
+    any invalid or traversal-attempting input.
+    """
+    # Reject absolute paths and any component that is '.' or '..'
+    parts = Path(user_path).parts
+    safe_parts = [
+        p for p in parts
+        if p not in ("..", ".", "") and "/" not in p and "\\" not in p
+    ]
+    if not safe_parts or len(safe_parts) != len(parts):
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    target = base.joinpath(*safe_parts).resolve()
+    # Verify the result is actually within base
+    if not str(target).startswith(str(base.resolve()) + "/") and target != base.resolve():
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    return target
 
 
 def _build_tree(base: Path, current: Path) -> dict[str, Any]:
@@ -83,12 +112,8 @@ async def get_artifact(run_id: str, file_path: str) -> Any:
     if not run_dir.exists():
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
-    # Normalise and security-check the requested path
-    try:
-        target = (run_dir / file_path).resolve()
-        target.relative_to(run_dir.resolve())
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    # Sanitise the user-supplied relative path before any file system access
+    target = _safe_child_path(run_dir, file_path)
 
     if not target.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
@@ -128,6 +153,7 @@ async def get_hitl_state(run_id: str) -> dict[str, Any]:
     result: dict[str, Any] = {"run_id": run_id, "waiting": None, "session": None}
 
     def _read(name: str) -> dict[str, Any] | None:
+        # name is a hardcoded literal — no user input involved
         p = hitl_dir / name
         if not p.exists():
             return None
@@ -155,13 +181,11 @@ async def get_run_logs(
     if not run_dir.exists():
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
-    log_paths = [
-        run_dir / "pipeline.log",
-        run_dir / "run.log",
-        run_dir / "researchclaw.log",
-    ]
+    # Log file names are hardcoded literals — no user input involved
+    log_names = ("pipeline.log", "run.log", "researchclaw.log")
     log_file: Path | None = None
-    for p in log_paths:
+    for name in log_names:
+        p = run_dir / name
         if p.exists():
             log_file = p
             break
@@ -175,3 +199,4 @@ async def get_run_logs(
         raise HTTPException(status_code=500, detail=str(exc))
 
     return PlainTextResponse("\n".join(lines[-tail:]))
+

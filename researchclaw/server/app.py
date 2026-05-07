@@ -123,9 +123,8 @@ def create_app(
     @app.websocket("/ws/hitl/{run_id}")
     async def hitl_ws(websocket: WebSocket, run_id: str) -> None:
         """Bidirectional HITL interaction channel for a specific run."""
-        import re as _re_hitl
-        _RUN_ID_RE = _re_hitl.compile(r"^rc-\d{8}-\d{6}-[a-f0-9]+$")
-        if not _RUN_ID_RE.match(run_id):
+        from researchclaw.server.routes.artifacts import _RUN_ID_RE as _HITL_RUN_ID_RE
+        if not _HITL_RUN_ID_RE.fullmatch(run_id):
             await websocket.close(code=1008, reason="Invalid run_id")
             return
 
