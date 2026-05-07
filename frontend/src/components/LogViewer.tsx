@@ -94,7 +94,7 @@ export function LogViewer({ runId, tail = 200, polling = false, pollMs = 3000 }:
         {!loading && !error && (
           <>
             {filtered.map((line, i) => (
-              <div key={i} className={`${highlight(line)} leading-relaxed whitespace-pre-wrap break-all`}>
+              <div key={`${i}-${line.slice(0, 24)}`} className={`${highlight(line)} leading-relaxed whitespace-pre-wrap break-all`}>
                 {line || '\u00A0'}
               </div>
             ))}

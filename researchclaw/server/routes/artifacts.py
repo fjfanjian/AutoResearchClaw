@@ -38,10 +38,10 @@ def _validated_run_dir(run_id: str) -> Path:
     # Reconstruct from captured groups — guarantees only digits and hex chars
     safe_run_id = f"rc-{m.group(1)}-{m.group(2)}-{m.group(3)}"
     run_dir = _ARTIFACTS_ROOT / safe_run_id
-    # Belt-and-suspenders: ensure the resolved path is still under artifacts/
+    # Belt-and-suspenders: ensure the resolved path is under the artifacts root
     artifacts_root = _ARTIFACTS_ROOT.resolve()
     resolved = run_dir.resolve()
-    if not str(resolved).startswith(str(artifacts_root) + "/"):
+    if artifacts_root not in resolved.parents and resolved != artifacts_root:
         raise HTTPException(status_code=400, detail="Invalid run_id")
     return run_dir
 
@@ -53,16 +53,16 @@ def _safe_child_path(base: Path, user_path: str) -> Path:
     any invalid or traversal-attempting input.
     """
     # Reject absolute paths and any component that is '.' or '..'
+    # Path.parts already normalises separators, so individual components
+    # will never contain path separators themselves.
     parts = Path(user_path).parts
-    safe_parts = [
-        p for p in parts
-        if p not in ("..", ".", "") and "/" not in p and "\\" not in p
-    ]
+    safe_parts = [p for p in parts if p not in ("..", ".", "")]
     if not safe_parts or len(safe_parts) != len(parts):
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
     target = base.joinpath(*safe_parts).resolve()
-    # Verify the result is actually within base
-    if not str(target).startswith(str(base.resolve()) + "/") and target != base.resolve():
+    # Verify the result is actually within base using parent relationship
+    base_resolved = base.resolve()
+    if base_resolved not in target.parents and target != base_resolved:
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
     return target
 

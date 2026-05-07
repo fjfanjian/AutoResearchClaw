@@ -55,7 +55,7 @@ export function useHITL(runId: string | null): UseHITLReturn {
   )
 
   const { status, send } = useWebSocket({
-    url: wsUrl(`/ws/hitl/${runId}`),
+    url: runId ? wsUrl(`/ws/hitl/${runId}`) : '',
     onMessage: handleMessage,
     enabled: !!runId,
   })
