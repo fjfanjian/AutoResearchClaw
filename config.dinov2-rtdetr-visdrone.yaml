@@ -1,0 +1,151 @@
+project:
+  name: "DINOv2-RT-DETRv2-VisDrone"
+  mode: "full-auto"
+
+research:
+  topic: >
+    Replace RT-DETRv2's ResNet backbone with a frozen DINOv2 (ViT-S/14 or ViT-B/14) backbone
+    for aerial object detection on VisDrone2019-DET. The DINOv2 encoder extracts patch-level
+    visual features from ViT, which are then fed into RT-DETRv2's encoder-decoder detection
+    head (HybridEncoder + Transformer decoder). The backbone weights remain frozen throughout
+    training (no fine-tuning), leveraging DINOv2's strong self-supervised representations to
+    reduce dependence on annotated data. Evaluate on VisDrone2019-DET (10 classes: pedestrian,
+    people, bicycle, car, van, truck, tricycle, awning-tricycle, bus, motor) spanning diverse
+    scenes, altitudes, and weather conditions. Compare against vanilla RT-DETRv2-ResNet,
+    RT-DETRv2-Swin, and YOLOv8/v10 baselines in terms of mAP@0.5:0.95, AP_s (small objects),
+    AP_M (medium objects), params, FLOPs, and FPS. Key challenge: bridge the architectural gap
+    between ViT patch embeddings and RT-DETRv2's feature pyramid while keeping backbone frozen,
+    and validate that frozen DINOv2 features generalize well to UAV perspective and small/occluded
+    objects without domain-specific fine-tuning.
+  domains:
+    - "object-detection"
+    - "aerial-imagery"
+    - "remote-sensing"
+    - "self-supervised-learning"
+    - "transfer-learning"
+    - "computer-vision"
+  daily_paper_count: 15
+  quality_threshold: 4.0
+
+runtime:
+  timezone: "Asia/Shanghai"
+  max_parallel_tasks: 2
+  approval_timeout_hours: 24
+  retry_limit: 3
+
+# === LLM ===
+llm:
+  provider: "acp"
+  s2_api_key_env: "S2_API_KEY"
+  acp:
+    agent: "claude"
+    cwd: "."
+
+# === 实验 ===
+experiment:
+  mode: "docker"
+  time_budget_sec: 600
+  max_iterations: 8
+  metric_key: "mAP"
+  metric_direction: "maximize"
+  sandbox:
+    python_path: ".venv/bin/python3"
+    gpu_required: true
+    max_memory_mb: 32768
+  docker:
+    image: "researchclaw/experiment:latest"
+    network_policy: "full"
+    gpu_enabled: true
+    memory_limit_mb: 65536
+    shm_size_mb: 8192
+    auto_install_deps: true
+    keep_containers: false
+    pip_pre_install:
+      - "torch>=2.1.0"
+      - "torchvision>=0.16.0"
+      - "timm>=0.9.0"
+      - "transformers>=4.36.0"
+      - "opencv-python>=4.8.0"
+      - "pycocotools>=2.0.6"
+      - "einops>=0.7.0"
+      - "submitit>=1.5.0"
+      - "tqdm>=4.66.0"
+    volumes:
+      - ["/home/fj/RT-DETR", "/workspace/RT-DETR"]
+      - ["/home/fj/datasets/visdrone", "/workspace/datasets/visdrone"]
+  opencode:
+    enabled: false
+  code_agent:
+    enabled: true
+    architecture_planning: true
+    sequential_generation: true
+    hard_validation: true
+    hard_validation_max_repairs: 3
+    exec_fix_max_iterations: 5
+    exec_fix_timeout_sec: 120
+  benchmark_agent:
+    enabled: true
+    enable_hf_search: true
+    enable_web_search: true
+    tier_limit: 2
+    min_benchmarks: 1
+    min_baselines: 3
+  figure_agent:
+    enabled: true
+    min_figures: 4
+    max_figures: 10
+    max_iterations: 3
+    dpi: 300
+    strict_mode: false
+  repair:
+    enabled: true
+    max_cycles: 3
+    min_completion_rate: 0.5
+    min_conditions: 2
+    use_opencode: false
+
+# === 网络搜索 ===
+web_search:
+  enabled: true
+  enable_scholar: true
+  enable_pdf_extraction: true
+  max_web_results: 10
+
+# === 导出 ===
+export:
+  target_conference: "neurips_2025"
+  authors: "Anonymous"
+  bib_file: "references"
+
+# === Prompts ===
+prompts:
+  custom_file: ""
+
+# === 安全 ===
+security:
+  hitl_required_stages: [5, 9, 20]
+  allow_publish_without_approval: false
+  redact_sensitive_logs: true
+
+# === 知识库 ===
+knowledge_base:
+  backend: "markdown"
+  root: "docs/kb"
+
+# === 通知 ===
+notifications:
+  channel: "console"
+  target: ""
+
+# === MetaClaw Bridge ===
+metaclaw_bridge:
+  enabled: false
+
+# === OpenClaw Bridge ===
+openclaw_bridge:
+  use_cron: false
+  use_message: true
+  use_memory: false
+  use_sessions_spawn: false
+  use_web_fetch: true
+  use_browser: true
