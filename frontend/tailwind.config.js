@@ -21,7 +21,7 @@ export default {
         muted: '#8b949e',
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Fira Code', 'ui-monospace', 'monospace'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       animation: {
         pulse_slow: 'pulse 2.5s cubic-bezier(0.4,0,0.6,1) infinite',
