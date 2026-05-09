@@ -1,4 +1,4 @@
-import type { ConfigSummary, Run, RunSummary, StageDef, ArtifactNode, ArtifactContent, HITLStatus } from '@/types'
+import type { ConfigSummary, Run, RunSummary, StageDef, ArtifactNode, ArtifactContent, HITLStatus, DoctorReport, FullConfigResponse, ConfigSaveRequest, ConfigSaveResponse, ConfigFieldsResponse } from '@/types'
 
 const API_BASE = '/api'
 
@@ -12,23 +12,43 @@ async function _fetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  doctor: () => _fetch<DoctorReport>('/doctor'),
+
   health: () => _fetch<{ status: string; version: string; active_connections: number }>('/health'),
 
   config: () => _fetch<ConfigSummary>('/config'),
+
+  fullConfig: () => _fetch<FullConfigResponse>('/config/full'),
+
+  saveConfig: (updates: ConfigSaveRequest) =>
+    _fetch<ConfigSaveResponse>('/config/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    }),
+
+  configFields: () => _fetch<ConfigFieldsResponse>('/config/fields'),
 
   pipelineStages: () => _fetch<{ stages: StageDef[] }>('/pipeline/stages'),
 
   pipelineStatus: () => _fetch<{ status: string } & Record<string, unknown>>('/pipeline/status'),
 
-  startPipeline: (topic: string, autoApprove = true) =>
+  startPipeline: (topic: string, autoApprove = true, configOverrides?: Record<string, unknown>) =>
     _fetch<{ run_id: string; status: string; output_dir: string }>('/pipeline/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, auto_approve: autoApprove }),
+      body: JSON.stringify({ topic, auto_approve: autoApprove, config_overrides: configOverrides }),
     }),
 
   stopPipeline: () =>
     _fetch<{ status: string }>('/pipeline/stop', { method: 'POST' }),
+
+  resumePipeline: (runId: string, autoApprove = true, configOverrides?: Record<string, unknown>) =>
+    _fetch<{ run_id: string; status: string; output_dir: string }>(`/pipeline/resume/${runId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_approve: autoApprove, config_overrides: configOverrides }),
+    }),
 
   listRuns: () => _fetch<{ runs: RunSummary[] }>('/runs'),
 

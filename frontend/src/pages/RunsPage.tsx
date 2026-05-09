@@ -1,23 +1,48 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Search, ArrowRight, Loader2, AlertCircle, CheckCircle2, Clock } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Search, ArrowRight, Loader2, AlertCircle, CheckCircle2, Clock, RotateCw } from 'lucide-react'
 import { useRuns } from '@/hooks/useRuns'
+import { api } from '@/api/client'
+import { useNotify } from '@/context/AppContext'
 
 const statusIcon: Record<string, React.ReactNode> = {
   running: <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />,
   completed: <CheckCircle2 className="h-4 w-4 text-emerald-400" />,
   failed: <AlertCircle className="h-4 w-4 text-rose-400" />,
   stopped: <Clock className="h-4 w-4 text-amber-400" />,
+  interrupted: <AlertCircle className="h-4 w-4 text-amber-400" />,
+}
+
+function canResume(run: { status?: string; current_stage?: number }): boolean {
+  if (run.status === 'running') return false
+  if (run.current_stage == null) return false
+  return run.current_stage > 0 && run.current_stage < 23
 }
 
 export default function RunsPage() {
   const { runs, loading, error } = useRuns()
   const [filter, setFilter] = useState('')
+  const [resumingId, setResumingId] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const notify = useNotify()
 
   const filtered = runs.filter((r) =>
     r.run_id.toLowerCase().includes(filter.toLowerCase()) ||
     (r.topic || '').toLowerCase().includes(filter.toLowerCase())
   )
+
+  const handleResume = async (runId: string) => {
+    setResumingId(runId)
+    try {
+      await api.resumePipeline(runId)
+      notify('流水线已恢复', 'success', runId)
+      navigate('/')
+    } catch (err: any) {
+      notify('恢复流水线失败', 'error', err.message)
+    } finally {
+      setResumingId(null)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -68,12 +93,28 @@ export default function RunsPage() {
                 </p>
               )}
             </div>
-            <Link
-              to={`/runs/${run.run_id}`}
-              className="ml-4 flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-500/10"
-            >
-              查看 <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+            <div className="flex items-center gap-2">
+              {canResume(run) && (
+                <button
+                  onClick={() => handleResume(run.run_id)}
+                  disabled={resumingId === run.run_id}
+                  className="flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
+                >
+                  {resumingId === run.run_id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCw className="h-3.5 w-3.5" />
+                  )}
+                  {resumingId === run.run_id ? '恢复中...' : '恢复'}
+                </button>
+              )}
+              <Link
+                to={`/runs/${run.run_id}`}
+                className="flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-500/10"
+              >
+                查看 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
           </div>
         ))}
       </div>

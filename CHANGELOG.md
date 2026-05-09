@@ -6,6 +6,18 @@
 
 ### Added
 
+- 新增阶段卡片折叠/展开、阶段进度计数与状态着色功能
+- 实时日志流查看器，支持自动滚动与关键词高亮
+- 环境健康诊断工具，支持一键检查 LLM 连接与 API Key 可用性
+- 新建研究弹窗，支持自定义研究主题与自动审批选项
+- 流水线从历史检查点恢复功能（`POST /api/pipeline/resume/{run_id}`）
+  - 运行历史页与运行详情页新增「恢复」按钮
+  - 后台 `_write_checkpoint` 新增 topic 存储，支持按主题恢复
+
+### Fixed
+
+- 修复 `GET /pipeline/stages` 中阶段 phase 字段始终为空的问题，阶段现在按 A-H 正确分组
+- 展开 `GET /runs` 与 `GET /runs/{run_id}` 的 checkpoint 字段，返回 `current_stage`、`topic`、`status` 等扁平化字段
 - 新增 Artifact 浏览与日志读取 API 路由（`/api/runs/{run_id}/artifacts`、`/api/runs/{run_id}/logs`、`/api/runs/{run_id}/hitl`）
 - 注册 `/ws/hitl/{run_id}` WebSocket 路由，支持 HITL 人机交互
 - 后端 SPA fallback 路由，支持前端 React Router 子路由刷新

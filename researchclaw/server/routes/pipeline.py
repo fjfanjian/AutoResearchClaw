@@ -57,6 +57,16 @@ def _get_app_state() -> dict[str, Any]:
     return _app_state
 
 
+def _deep_update(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Recursively update base dict with overrides."""
+    for key, value in overrides.items():
+        if isinstance(value, dict) and key in base and isinstance(base[key], dict):
+            base[key] = _deep_update(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 @router.post("/pipeline/start", response_model=PipelineStartResponse)
 async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
     """Start a new pipeline run."""
@@ -73,6 +83,13 @@ async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
         new_research = dataclasses.replace(config.research, topic=req.topic)
         config = dataclasses.replace(config, research=new_research)
 
+    # Apply config overrides if provided
+    if req.config_overrides:
+        from researchclaw.config import RCConfig
+        config_dict = config.to_dict()
+        config_dict = _deep_update(config_dict, req.config_overrides)
+        config = RCConfig.from_dict(config_dict, check_paths=False)
+
     import hashlib
     from datetime import datetime, timezone
 
@@ -87,6 +104,9 @@ async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
         "status": "running",
         "output_dir": str(run_dir),
         "topic": config.research.topic,
+        "current_stage": 1,
+        "current_stage_name": "",
+        "total_stages": 23,
     }
 
     async def _run_in_background() -> None:
@@ -116,6 +136,8 @@ async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
             failed = sum(1 for r in results if r.status.value == "failed")
             if _active_run:
                 _active_run["status"] = "completed" if failed == 0 else "failed"
+                _active_run["current_stage"] = 23
+                _active_run["current_stage_name"] = "Completed"
                 _active_run["stages_done"] = done
                 _active_run["stages_failed"] = failed
         except Exception as exc:
@@ -123,6 +145,141 @@ async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
             if _active_run:
                 _active_run["status"] = "failed"
                 _active_run["error"] = str(exc)
+
+    # Broadcast pipeline_started event
+    try:
+        state = _get_app_state()
+        ev_mgr = state.get("event_manager")
+        if ev_mgr:
+            from researchclaw.server.websocket.events import Event, EventType
+            asyncio.create_task(
+                ev_mgr.broadcast(
+                    Event(type=EventType.PIPELINE_STARTED, data=dict(_active_run))
+                )
+            )
+    except Exception:
+        logger.exception("Failed to broadcast pipeline_started event")
+
+    _run_task = asyncio.create_task(_run_in_background())
+
+    return PipelineStartResponse(
+        run_id=run_id,
+        status="running",
+        output_dir=str(run_dir),
+    )
+
+
+class PipelineResumeRequest(BaseModel):
+    """Request body for resuming a pipeline run."""
+
+    auto_approve: bool = True
+    config_overrides: dict[str, Any] | None = None
+
+
+@router.post("/pipeline/resume/{run_id}", response_model=PipelineStartResponse)
+async def resume_pipeline(run_id: str, req: PipelineResumeRequest) -> PipelineStartResponse:
+    """Resume a pipeline run from its last checkpoint."""
+    global _active_run, _run_task
+
+    if _active_run and _active_run.get("status") == "running":
+        raise HTTPException(status_code=409, detail="A pipeline is already running")
+
+    run_dir = _validated_run_dir(run_id)
+    if not run_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+    # Read checkpoint to determine next stage
+    from researchclaw.pipeline.runner import read_checkpoint
+
+    next_stage = read_checkpoint(run_dir)
+    if next_stage is None:
+        raise HTTPException(status_code=400, detail="No valid checkpoint found – the run may already be complete or have no checkpoint")
+
+    state = _get_app_state()
+    config = state["config"]
+
+    # Try to recover topic from checkpoint, fall back to config topic
+    topic = config.research.topic
+    try:
+        ckpt_data = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
+        topic = ckpt_data.get("topic", topic)
+    except Exception:
+        pass
+
+    # Build config with the resolved topic
+    import dataclasses
+
+    new_research = dataclasses.replace(config.research, topic=topic)
+    config = dataclasses.replace(config, research=new_research)
+
+    if req.config_overrides:
+        from researchclaw.config import RCConfig
+
+        config_dict = config.to_dict()
+        config_dict = _deep_update(config_dict, req.config_overrides)
+        config = RCConfig.from_dict(config_dict, check_paths=False)
+
+    _active_run = {
+        "run_id": run_id,
+        "status": "running",
+        "output_dir": str(run_dir),
+        "topic": topic,
+        "current_stage": int(next_stage),
+        "current_stage_name": next_stage.name,
+        "total_stages": 23,
+    }
+
+    async def _run_in_background() -> None:
+        global _active_run
+        try:
+            from researchclaw.adapters import AdapterBundle
+            from researchclaw.pipeline.runner import execute_pipeline
+
+            kb_root = Path(config.knowledge_base.root) if config.knowledge_base.root else None
+            if kb_root:
+                kb_root.mkdir(parents=True, exist_ok=True)
+
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: execute_pipeline(
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    config=config,
+                    adapters=AdapterBundle(),
+                    from_stage=next_stage,
+                    auto_approve_gates=req.auto_approve,
+                    skip_noncritical=True,
+                    kb_root=kb_root,
+                ),
+            )
+            done = sum(1 for r in results if r.status.value == "done")
+            failed = sum(1 for r in results if r.status.value == "failed")
+            if _active_run:
+                _active_run["status"] = "completed" if failed == 0 else "failed"
+                _active_run["current_stage"] = 23
+                _active_run["current_stage_name"] = "Completed"
+                _active_run["stages_done"] = done
+                _active_run["stages_failed"] = failed
+        except Exception as exc:
+            logger.exception("Pipeline resume failed")
+            if _active_run:
+                _active_run["status"] = "failed"
+                _active_run["error"] = str(exc)
+
+    # Broadcast pipeline_started event
+    try:
+        ev_mgr = state.get("event_manager")
+        if ev_mgr:
+            from researchclaw.server.websocket.events import Event, EventType
+
+            asyncio.create_task(
+                ev_mgr.broadcast(
+                    Event(type=EventType.PIPELINE_STARTED, data=dict(_active_run))
+                )
+            )
+    except Exception:
+        logger.exception("Failed to broadcast pipeline_started event")
 
     _run_task = asyncio.create_task(_run_in_background())
 
@@ -151,13 +308,47 @@ async def pipeline_status() -> dict[str, Any]:
     """Get current pipeline run status."""
     if not _active_run:
         return {"status": "idle"}
-    return _active_run
+    result = dict(_active_run)
+    # Enrich with checkpoint data if available
+    if _active_run.get("run_id"):
+        run_dir = Path("artifacts") / _active_run["run_id"]
+        ckpt = run_dir / "checkpoint.json"
+        if ckpt.exists():
+            try:
+                with ckpt.open() as f:
+                    ckpt_data = json.load(f)
+                result["current_stage"] = ckpt_data.get("stage", 0)
+                result["current_stage_name"] = ckpt_data.get("stage_name", "")
+            except Exception:
+                pass
+    return result
+
+
+@router.get("/doctor")
+async def doctor_check() -> dict[str, Any]:
+    """Run environment health checks (doctor) and return report."""
+    import asyncio
+    from researchclaw.health import run_doctor_from_config
+
+    state = _get_app_state()
+    config = state["config"]
+
+    loop = asyncio.get_event_loop()
+    report = await loop.run_in_executor(None, run_doctor_from_config, config)
+    return report.to_dict()  # type: ignore[return-value]
 
 
 @router.get("/pipeline/stages")
 async def pipeline_stages() -> dict[str, Any]:
     """Get the 23-stage pipeline definition."""
-    from researchclaw.pipeline.stages import Stage
+    from researchclaw.pipeline.stages import Stage, PHASE_MAP
+
+    # Build stage_number -> phase_letter mapping from PHASE_MAP
+    _stage_phase: dict[int, str] = {}
+    for phase_key, stage_tuple in PHASE_MAP.items():
+        letter = phase_key[0]
+        for s in stage_tuple:
+            _stage_phase[int(s)] = letter
 
     stages = []
     for s in Stage:
@@ -165,7 +356,7 @@ async def pipeline_stages() -> dict[str, Any]:
             "number": int(s),
             "name": s.name,
             "label": getattr(s, "label", s.name.replace("_", " ").title()),
-            "phase": getattr(s, "phase", ""),
+            "phase": _stage_phase.get(int(s), ""),
         })
     return {"stages": stages}
 
@@ -179,14 +370,31 @@ async def list_runs() -> dict[str, Any]:
         for d in sorted(artifacts.iterdir(), reverse=True):
             if d.is_dir() and d.name.startswith("rc-"):
                 info: dict[str, Any] = {"run_id": d.name, "path": str(d)}
-                # Try reading checkpoint
+                # Try reading checkpoint and flatten key fields
                 ckpt = d / "checkpoint.json"
                 if ckpt.exists():
                     try:
                         with ckpt.open() as f:
-                            info["checkpoint"] = json.load(f)
+                            ckpt_data: dict[str, Any] = json.load(f)
+                        info["checkpoint"] = ckpt_data
+                        info["current_stage"] = ckpt_data.get("last_completed_stage", 0)
+                        info["topic"] = ckpt_data.get("topic", "")
                     except Exception:
                         pass
+                # Determine status from pipeline_summary.json
+                summary_file = d / "pipeline_summary.json"
+                if summary_file.exists():
+                    try:
+                        with summary_file.open() as f:
+                            summary_data: dict[str, Any] = json.load(f)
+                        raw_status = summary_data.get("final_status", "unknown")
+                        info["status"] = "completed" if raw_status == "done" else raw_status
+                    except Exception:
+                        info["status"] = "unknown"
+                elif ckpt.exists():
+                    info["status"] = "interrupted"
+                else:
+                    info["status"] = "unknown"
                 runs.append(info)
     return {"runs": runs[:50]}  # limit to 50 most recent
 
@@ -204,9 +412,27 @@ async def get_run(run_id: str) -> dict[str, Any]:
     if ckpt.exists():
         try:
             with ckpt.open() as f:
-                info["checkpoint"] = json.load(f)
+                ckpt_data: dict[str, Any] = json.load(f)
+            info["checkpoint"] = ckpt_data
+            info["current_stage"] = ckpt_data.get("last_completed_stage", 0)
+            info["topic"] = ckpt_data.get("topic", "")
         except Exception:
             pass
+
+    # Determine status from pipeline_summary.json
+    summary_file = run_dir / "pipeline_summary.json"
+    if summary_file.exists():
+        try:
+            with summary_file.open() as f:
+                summary_data: dict[str, Any] = json.load(f)
+            raw_status = summary_data.get("final_status", "unknown")
+            info["status"] = "completed" if raw_status == "done" else raw_status
+        except Exception:
+            info["status"] = "unknown"
+    elif ckpt.exists():
+        info["status"] = "interrupted"
+    else:
+        info["status"] = "unknown"
 
     # List stage directories
     stage_dirs = sorted(

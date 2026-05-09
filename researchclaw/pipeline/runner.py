@@ -78,6 +78,7 @@ def _write_pipeline_summary(run_dir: Path, summary: dict[str, object]) -> None:
 def _write_checkpoint(
     run_dir: Path, stage: Stage, run_id: str,
     adapters: "AdapterBundle | None" = None,
+    topic: str | None = None,
 ) -> None:
     """Write checkpoint atomically via temp file + rename to prevent corruption."""
     checkpoint: dict[str, object] = {
@@ -86,6 +87,8 @@ def _write_checkpoint(
         "run_id": run_id,
         "timestamp": _utcnow_iso(),
     }
+    if topic:
+        checkpoint["topic"] = topic
 
     # Embed HITL session data if available
     if adapters is not None:
@@ -443,6 +446,51 @@ def execute_pipeline(
 ) -> list[StageResult]:
     """Execute pipeline stages sequentially from `from_stage` and write summary."""
 
+    total_stages = len(STAGE_SEQUENCE)
+
+    # ── Pipeline log file (captures all logger output for dashboard) ──
+    _plog = logging.getLogger("researchclaw")
+    _plog_fh = logging.FileHandler(run_dir / "pipeline.log", encoding="utf-8")
+    _plog_fh.setLevel(logging.DEBUG)
+    _plog_fh.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    _plog.addHandler(_plog_fh)
+    try:
+        results = _execute_pipeline_impl(
+            run_dir=run_dir,
+            run_id=run_id,
+            config=config,
+            adapters=adapters,
+            from_stage=from_stage,
+            auto_approve_gates=auto_approve_gates,
+            stop_on_gate=stop_on_gate,
+            skip_noncritical=skip_noncritical,
+            kb_root=kb_root,
+            cancel_event=cancel_event,
+        )
+    finally:
+        _plog.removeHandler(_plog_fh)
+        _plog_fh.close()
+    return results
+
+
+def _execute_pipeline_impl(
+    *,
+    run_dir: Path,
+    run_id: str,
+    config: RCConfig,
+    adapters: AdapterBundle,
+    from_stage: Stage = Stage.TOPIC_INIT,
+    auto_approve_gates: bool = False,
+    stop_on_gate: bool = False,
+    skip_noncritical: bool = False,
+    kb_root: Path | None = None,
+    cancel_event: "threading.Event | None" = None,
+) -> list[StageResult]:
+    """Internal pipeline execution (without log file setup)."""
+
     results: list[StageResult] = []
     started = False
     total_stages = len(STAGE_SEQUENCE)
@@ -648,7 +696,7 @@ def execute_pipeline(
                 pass
 
         if result.status == StageStatus.DONE:
-            _write_checkpoint(run_dir, stage, run_id, adapters=adapters)
+            _write_checkpoint(run_dir, stage, run_id, adapters=adapters, topic=config.research.topic)
 
         # --- Experiment diagnosis + repair after Stage 14 (result_analysis) ---
         if (
