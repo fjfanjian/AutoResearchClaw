@@ -27,6 +27,7 @@ def create_app(
     *,
     dashboard_only: bool = False,
     monitor_dir: str | None = None,
+    config_path: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -34,6 +35,7 @@ def create_app(
         config: ResearchClaw configuration.
         dashboard_only: If True, only mount dashboard routes.
         monitor_dir: Specific run directory to monitor.
+        config_path: Path to the config YAML file (for save/reload).
     """
     app = FastAPI(
         title="ResearchClaw",
@@ -43,6 +45,7 @@ def create_app(
 
     # Store config in shared state
     _app_state["config"] = config
+    _app_state["config_path"] = config_path
     _app_state["monitor_dir"] = monitor_dir
 
     # --- CORS ---
@@ -84,10 +87,12 @@ def create_app(
         }
 
     # --- Routes ---
+    from researchclaw.server.routes.config import router as config_router
     from researchclaw.server.routes.pipeline import router as pipeline_router
     from researchclaw.server.routes.projects import router as projects_router
     from researchclaw.server.routes.artifacts import router as artifacts_router
 
+    app.include_router(config_router)
     app.include_router(pipeline_router)
     app.include_router(projects_router)
     app.include_router(artifacts_router)

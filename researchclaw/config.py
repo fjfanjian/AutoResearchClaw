@@ -919,8 +919,8 @@ def validate_config(
 
     hitl_required_stages = _get_by_path(data, "security.hitl_required_stages")
     if hitl_required_stages is not None:
-        if not isinstance(hitl_required_stages, list):
-            errors.append("security.hitl_required_stages must be a list")
+        if not isinstance(hitl_required_stages, (list, tuple)):
+            errors.append("security.hitl_required_stages must be a list or tuple")
         else:
             for stage in hitl_required_stages:
                 if not isinstance(stage, int) or not 1 <= stage <= 23:

@@ -564,8 +564,8 @@ def check_docker_runtime(config: RCConfig) -> CheckResult:
 
 def run_doctor(config_path: str | Path) -> DoctorReport:
     """Run all health checks and return report."""
-    checks: list[CheckResult] = []
     path = Path(config_path)
+    checks: list[CheckResult] = []
 
     checks.append(check_python_version())
     checks.append(check_yaml_import())
@@ -582,16 +582,70 @@ def run_doctor(config_path: str | Path) -> DoctorReport:
 
     try:
         config = RCConfig.load(path, check_paths=False)
-        provider = config.llm.provider
-        base_url = config.llm.base_url
-        api_key = config.llm.api_key or os.environ.get(config.llm.api_key_env, "")
-        model = config.llm.primary_model
-        fallback_models = config.llm.fallback_models
-        sandbox_python_path = config.experiment.sandbox.python_path
-        experiment_mode = config.experiment.mode
-        acp_agent_command = config.llm.acp.agent
     except (FileNotFoundError, OSError, ValueError, yaml.YAMLError) as exc:
         logger.debug("Could not fully load config for doctor checks: %s", exc)
+        config = None
+
+    if config is not None:
+        return _run_checks_from_config(
+            config,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            fallback_models=fallback_models,
+            sandbox_python_path=sandbox_python_path,
+            experiment_mode=experiment_mode,
+            provider=provider,
+            acp_agent_command=acp_agent_command,
+            existing_checks=checks,
+        )
+
+    overall = "fail" if any(c.status == "fail" for c in checks) else "pass"
+    return DoctorReport(
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        checks=checks,
+        overall=overall,
+    )
+
+
+def run_doctor_from_config(config: RCConfig) -> DoctorReport:
+    """Run all health checks using an already-loaded RCConfig.
+
+    Use this when the config is already available in memory (e.g. from
+    the web server's app state) to avoid re-loading from disk.
+    """
+    checks: list[CheckResult] = [
+        check_python_version(),
+    ]
+    return _run_checks_from_config(
+        config,
+        existing_checks=checks,
+    )
+
+
+def _run_checks_from_config(
+    config: RCConfig,
+    *,
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "",
+    fallback_models: tuple[str, ...] = (),
+    sandbox_python_path: str = "",
+    experiment_mode: str = "",
+    provider: str = "",
+    acp_agent_command: str = "claude",
+    existing_checks: list[CheckResult] | None = None,
+) -> DoctorReport:
+    """Shared doctor logic: given a config, run LLM/sandbox/environment checks."""
+    checks = list(existing_checks or [])
+    provider = provider or config.llm.provider
+    base_url = base_url or config.llm.base_url
+    api_key = api_key or config.llm.api_key or os.environ.get(config.llm.api_key_env, "")
+    model = model or config.llm.primary_model
+    fallback_models = fallback_models or config.llm.fallback_models
+    sandbox_python_path = sandbox_python_path or config.experiment.sandbox.python_path
+    experiment_mode = experiment_mode or config.experiment.mode
+    acp_agent_command = acp_agent_command or config.llm.acp.agent
 
     if provider == "acp":
         checks.append(check_acp_agent(acp_agent_command))

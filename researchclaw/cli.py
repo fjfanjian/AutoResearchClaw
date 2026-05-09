@@ -544,7 +544,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
-    app = create_app(config, monitor_dir=args.monitor_dir)
+    app = create_app(config, config_path=str(config_path), monitor_dir=args.monitor_dir)
     uvicorn.run(app, host=host, port=port)
     return 0
 
@@ -570,7 +570,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         )
         return 1
 
-    app = create_app(config, dashboard_only=True, monitor_dir=args.monitor_dir)
+    app = create_app(config, dashboard_only=True, config_path=str(config_path), monitor_dir=args.monitor_dir)
     uvicorn.run(app, host=host, port=port)
     return 0
 

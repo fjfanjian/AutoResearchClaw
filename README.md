@@ -269,6 +269,8 @@ researchclaw run --config config.yaml --topic "Your research idea" --auto-approv
 | **Copilot CLI** | `researchclaw run --topic "..."` with `llm.acp.agent: "gh"` |
 | **OpenCode** | Reads `.claude/skills/` — same natural language interface |
 | **Any AI CLI** | Provide `RESEARCHCLAW_AGENTS.md` as context → agent auto-bootstraps |
+| **Web Dashboard** | `researchclaw serve` — Launch web dashboard + REST API with pipeline monitoring, config editor, and real-time log streaming |
+| **Dashboard (no API)** | `researchclaw dashboard` — Launch web dashboard with monitoring only (no config API routes mounted) |
 
 ---
 
@@ -337,6 +339,49 @@ Phase D: Experiment Design         Phase H: Finalization
 | **🧑‍✈️ HITL Co-Pilot** | 6 intervention modes with per-stage policies. Idea Workshop, Baseline Navigator, Paper Co-Writer for deep collaboration. SmartPause, cost guardrails, escalation policies, and intervention learning for production safety. CLI/WebSocket/MCP adapters. |
 | **💰 Cost Guardrails** | Budget monitoring with configurable threshold alerts (50%/80%/100%). Pipeline auto-pauses when cost exceeds budget. |
 | **🔐 Reproducibility** | SHA256 checksums for all stage artifacts. Immutable manifests for verification. Multi-level undo with versioned snapshots. |
+| **🖥️ Web Dashboard** | Real-time pipeline monitoring, dynamic config editor with form validation, artifact viewer with syntax highlighting, live log streaming, and new task creation — all from your browser |
+
+---
+
+## 🖥️ Web Dashboard
+
+**AutoResearchClaw ships with a built-in Web Dashboard** for monitoring and managing your research pipelines from the browser. Launch it alongside any running pipeline to inspect progress, tweak configuration, view artifacts, and follow logs in real time.
+
+### Launch
+
+```bash
+# Full dashboard + REST API (includes config management)
+researchclaw serve --config config.arc.yaml
+
+# Dashboard only (monitoring, no config API)
+researchclaw dashboard --config config.arc.yaml
+
+# Monitor a specific run directory
+researchclaw serve --config config.arc.yaml --monitor-dir artifacts/rc-2026-xxx
+```
+
+### Features
+
+| Feature | Description |
+|---------|------------|
+| **Run Overview** | Active run status, current stage progress, elapsed time, stage history |
+| **Config Editor** | Browse and edit all pipeline settings via a dynamic form — grouped by category (Project, LLM, Experiment, Security, etc.) with field validation, type-aware controls, and one-click save |
+| **Artifact Viewer** | Browse run output files in a tree view; preview Markdown, code (syntax-highlighted with 30+ language support), images, spreadsheets, and raw text; search file contents |
+| **Live Logs** | Follow pipeline logs in real time via WebSocket — stage events (start/complete/fail) with timestamps and incremental log line updates |
+| **New Task** | Create a new research task directly from the dashboard |
+| **Doctor Check** | Run `researchclaw doctor` health checks from the settings page |
+
+### Architecture
+
+```
+Browser (React SPA)  ←→  FastAPI (Uvicorn)  ←→  Run Monitor / Dashboard Broadcaster
+                              ↕
+                         Config YAML
+                              ↕
+                     Pipeline Runner (subprocess)
+```
+
+The dashboard connects to the backend via REST API for data fetching and WebSocket for real-time events (stage transitions, log lines, metric updates).
 
 ---
 
