@@ -24,6 +24,7 @@ class DashboardBroadcaster:
         self._manager = manager
         self._collector = collector
         self._prev_snapshots: dict[str, dict[str, Any]] = {}
+        self._log_line_counts: dict[str, int] = {}
 
     async def tick(self) -> None:
         """Collect current state and broadcast changes."""
@@ -40,6 +41,7 @@ class DashboardBroadcaster:
                 await self._manager.broadcast(
                     Event(type=EventType.RUN_DISCOVERED, data=d)
                 )
+                self._log_line_counts[snap.run_id] = len(snap.last_log_lines)
             else:
                 # Check for stage changes
                 if d["current_stage"] != prev.get("current_stage"):
@@ -63,6 +65,19 @@ class DashboardBroadcaster:
                             data={"run_id": snap.run_id, "metrics": d["metrics"]},
                         )
                     )
+                # Check for new log lines
+                prev_count = self._log_line_counts.get(snap.run_id, 0)
+                current_lines = snap.last_log_lines
+                if len(current_lines) > prev_count:
+                    new_lines = current_lines[prev_count:]
+                    for line in new_lines[-50:]:  # limit to 50 new lines per tick
+                        await self._manager.broadcast(
+                            Event(
+                                type=EventType.LOG_LINE,
+                                data={"run_id": snap.run_id, "line": line},
+                            )
+                        )
+                    self._log_line_counts[snap.run_id] = len(current_lines)
 
         self._prev_snapshots = current
 

@@ -1,12 +1,28 @@
 import React, { createContext, useContext, useReducer, useCallback } from 'react'
 import type { ActiveRunState, NotificationItem, RunSummary } from '@/types'
 
+export interface LiveLogEntry {
+  runId: string
+  line: string
+  timestamp: number
+}
+
+export interface StageEvent {
+  stage: number
+  stageName: string
+  status: string
+  timestamp: number
+}
+
 interface AppState {
   currentRun: ActiveRunState | null
   runs: RunSummary[]
   notifications: NotificationItem[]
   sidebarCollapsed: boolean
   theme: 'dark'
+  liveLogs: LiveLogEntry[]
+  stageEvents: StageEvent[]
+  eventConnected: boolean
 }
 
 type Action =
@@ -15,6 +31,10 @@ type Action =
   | { type: 'ADD_NOTIFICATION'; payload: NotificationItem }
   | { type: 'REMOVE_NOTIFICATION'; payload: string }
   | { type: 'TOGGLE_SIDEBAR' }
+  | { type: 'ADD_LIVE_LOG'; payload: LiveLogEntry }
+  | { type: 'CLEAR_LIVE_LOGS' }
+  | { type: 'ADD_STAGE_EVENT'; payload: StageEvent }
+  | { type: 'SET_EVENT_CONNECTED'; payload: boolean }
 
 const initialState: AppState = {
   currentRun: null,
@@ -22,6 +42,9 @@ const initialState: AppState = {
   notifications: [],
   sidebarCollapsed: false,
   theme: 'dark',
+  liveLogs: [],
+  stageEvents: [],
+  eventConnected: false,
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -36,6 +59,19 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, notifications: state.notifications.filter((n) => n.id !== action.payload) }
     case 'TOGGLE_SIDEBAR':
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed }
+    case 'ADD_LIVE_LOG': {
+      const logs = [...state.liveLogs, action.payload]
+      if (logs.length > 500) {
+        return { ...state, liveLogs: logs.slice(-500) }
+      }
+      return { ...state, liveLogs: logs }
+    }
+    case 'CLEAR_LIVE_LOGS':
+      return { ...state, liveLogs: [], stageEvents: [] }
+    case 'ADD_STAGE_EVENT':
+      return { ...state, stageEvents: [...state.stageEvents, action.payload] }
+    case 'SET_EVENT_CONNECTED':
+      return { ...state, eventConnected: action.payload }
     default:
       return state
   }

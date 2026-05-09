@@ -1,94 +1,234 @@
-import { useState, useEffect } from 'react'
-import { Settings, Server, BookOpen, Activity } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Settings, FileText, Save, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { api } from '@/api/client'
-import type { ConfigSummary } from '@/types'
+import type { ConfigGroup, FieldMeta } from '@/types'
+import ConfigForm from '@/components/ConfigForm'
+
+type StatusMessage = { type: 'success' | 'error'; text: string } | null
 
 export default function SettingsPage() {
-  const [config, setConfig] = useState<ConfigSummary | null>(null)
-  const [health, setHealth] = useState<{ status: string; version: string; active_connections: number } | null>(null)
+  const [config, setConfig] = useState<Record<string, unknown> | null>(null)
+  const [configPath, setConfigPath] = useState('')
+  const [fieldMeta, setFieldMeta] = useState<Record<string, FieldMeta>>({})
+  const [groups, setGroups] = useState<ConfigGroup[]>([])
+  const [activeGroup, setActiveGroup] = useState('project')
+  const [dirtyFields, setDirtyFields] = useState<Record<string, unknown>>({})
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [status, setStatus] = useState<StatusMessage>(null)
+  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
-    api.config().then(setConfig).catch(() => setConfig(null))
-    api.health().then(setHealth).catch(() => setHealth(null))
+  // ── Load data ──────────────────────────────────────────────────
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const [fullCfg, fieldsRes] = await Promise.all([
+        api.fullConfig(),
+        api.configFields(),
+      ])
+      setConfig(fullCfg.config)
+      setConfigPath(fullCfg.config_path)
+      setFieldMeta(fieldsRes.fields)
+      setGroups(fieldsRes.groups)
+      if (fieldsRes.groups.length > 0) {
+        setActiveGroup((prev) =>
+          fieldsRes.groups.some((g) => g.key === prev) ? prev : fieldsRes.groups[0].key,
+        )
+      }
+      // Reset dirty state
+      setDirtyFields({})
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '加载配置失败')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  // ── Field change handler ────────────────────────────────────────
+
+  const handleFieldChange = useCallback(
+    (key: string, value: unknown) => {
+      setDirtyFields((prev) => {
+        const next = { ...prev }
+        if (value === undefined || value === null) {
+          delete next[key]
+        } else {
+          next[key] = value
+        }
+        return next
+      })
+    },
+    [],
+  )
+
+  // ── Save handler ────────────────────────────────────────────────
+
+  const showStatus = (type: 'success' | 'error', text: string) => {
+    setStatus({ type, text })
+    if (statusTimer.current) clearTimeout(statusTimer.current)
+    if (type === 'success') {
+      statusTimer.current = setTimeout(() => setStatus(null), 3000)
+    }
+  }
+
+  const handleSave = useCallback(async () => {
+    setSaving(true)
+    setStatus(null)
+    try {
+      const resp = await api.saveConfig({ updates: dirtyFields })
+      showStatus('success', resp.message)
+      // Reload config to get fresh data
+      const fullCfg = await api.fullConfig()
+      setConfig(fullCfg.config)
+      setDirtyFields({})
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '保存失败'
+      showStatus('error', msg)
+    } finally {
+      setSaving(false)
+    }
+  }, [dirtyFields])
+
+  // ── Derived state ───────────────────────────────────────────────
+
+  const dirtyCount = Object.keys(dirtyFields).length
+  const hasDirty = dirtyCount > 0
+
+  // Determine which groups have dirty fields
+  const dirtyGroups = new Set<string>()
+  for (const key of Object.keys(dirtyFields)) {
+    const meta = fieldMeta[key]
+    if (meta) dirtyGroups.add(meta.group)
+  }
+
+  // ── Render ──────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6">
+        <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2">
+          <Settings className="h-5 w-5 text-indigo-400" />
+          设置
+        </h1>
+        <div className="card p-8 text-center text-slate-400 text-sm">加载中...</div>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6">
+        <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2">
+          <Settings className="h-5 w-5 text-indigo-400" />
+          设置
+        </h1>
+        <div className="error-banner flex items-center justify-between">
+          <span>加载失败: {loadError}</span>
+          <button onClick={loadData} className="btn-secondary text-xs px-3 py-1">
+            重试
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-5">
+      {/* Header */}
       <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2">
         <Settings className="h-5 w-5 text-indigo-400" />
         设置
       </h1>
 
-      {health && (
-        <div className="card p-5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-emerald-400" />
-            服务健康
-          </h2>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="rounded-md bg-slate-800/60 p-3">
-              <p className="text-xs text-slate-500">状态</p>
-              <p className="mt-1 text-sm font-medium text-emerald-300">{health.status}</p>
-            </div>
-            <div className="rounded-md bg-slate-800/60 p-3">
-              <p className="text-xs text-slate-500">版本</p>
-              <p className="mt-1 text-sm font-mono text-slate-200">{health.version}</p>
-            </div>
-            <div className="rounded-md bg-slate-800/60 p-3">
-              <p className="text-xs text-slate-500">连接数</p>
-              <p className="mt-1 text-sm font-mono text-slate-200">{health.active_connections}</p>
-            </div>
-          </div>
+      {/* Top bar: config path + action buttons */}
+      <div className="card p-4 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+          <span className="text-xs text-slate-500 font-mono truncate" title={configPath}>
+            {configPath || '未加载配置文件'}
+          </span>
+          {configPath && (
+            <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">
+              YAML
+            </span>
+          )}
         </div>
-      )}
-
-      {config && (
-        <div className="card p-5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <Server className="h-4 w-4 text-indigo-400" />
-            配置
-          </h2>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="text-sm text-slate-400">项目</span>
-              <span className="text-sm text-slate-200">{config.project}</span>
-            </div>
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="text-sm text-slate-400">主题</span>
-              <span className="text-sm text-slate-200">{config.topic}</span>
-            </div>
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="text-sm text-slate-400">模式</span>
-              <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{config.mode}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">语音启用</span>
-              <span className="text-sm text-slate-200">{config.server.voice_enabled ? '是' : '否'}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">仪表板启用</span>
-              <span className="text-sm text-slate-200">{config.server.dashboard_enabled ? '是' : '否'}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="card p-5">
-        <h2 className="mb-4 text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <BookOpen className="h-4 w-4 text-amber-400" />
-          快捷操作
-        </h2>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-2 shrink-0">
+          {dirtyCount > 0 && (
+            <span className="text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded">
+              {dirtyCount} 项未保存修改
+            </span>
+          )}
+          <button onClick={loadData} className="btn-ghost text-xs px-3 py-1.5" title="重新加载">
+            <RefreshCw className="h-3.5 w-3.5" />
+            重新加载
+          </button>
           <button
-            onClick={() => {
-              fetch('/api/health').then((r) => r.json()).then((d) => alert(JSON.stringify(d, null, 2)))
-            }}
-            className="btn-secondary text-xs"
+            onClick={handleSave}
+            disabled={!hasDirty || saving}
+            className={`btn text-xs px-4 py-1.5 ${hasDirty && !saving ? 'btn-primary' : 'btn-secondary opacity-50'}`}
           >
-            检查健康
+            <Save className="h-3.5 w-3.5" />
+            {saving ? '保存中...' : '保存'}
           </button>
         </div>
       </div>
+
+      {/* Status banner */}
+      {status && (
+        <div className={status.type === 'success' ? 'success-banner' : 'error-banner'}>
+          {status.type === 'success' ? (
+            <CheckCircle2 className="h-4 w-4 inline mr-1.5 -mt-0.5" />
+          ) : (
+            <AlertCircle className="h-4 w-4 inline mr-1.5 -mt-0.5" />
+          )}
+          {status.text}
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <div className="card overflow-hidden">
+        <div className="flex overflow-x-auto gap-1 p-2 bg-slate-900/40 border-b border-slate-700/50 scrollbar-thin">
+          {groups.map((g) => {
+            const isActive = g.key === activeGroup
+            const isDirty = dirtyGroups.has(g.key)
+            return (
+              <button
+                key={g.key}
+                onClick={() => setActiveGroup(g.key)}
+                className={`tab-btn ${isActive ? 'tab-btn-active' : 'tab-btn-inactive'} ${isDirty ? 'tab-btn-dirty' : ''}`}
+              >
+                {g.label}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Form area */}
+        <div className="p-5">
+          {config && (
+            <ConfigForm
+              group={activeGroup}
+              config={config}
+              fieldMeta={fieldMeta}
+              dirtyFields={dirtyFields}
+              onFieldChange={handleFieldChange}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Footer note */}
+      <p className="text-[11px] text-slate-600 text-center">
+        注意: 保存配置将覆盖写入 YAML 文件（原有注释会丢失）。服务器/端口等配置修改后需重启服务生效。
+      </p>
     </div>
   )
 }

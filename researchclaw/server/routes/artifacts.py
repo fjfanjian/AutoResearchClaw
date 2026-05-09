@@ -58,7 +58,13 @@ def _build_tree(root: Path, rel_prefix: str = "") -> dict[str, Any]:
 async def list_artifacts(run_id: str) -> dict[str, Any]:
     """List all artifacts for a run as a tree."""
     run_dir = _safe_run_dir(run_id)
-    tree = _build_tree(run_dir)
+    children: list[dict[str, Any]] = []
+    try:
+        for child in sorted(run_dir.iterdir()):
+            children.append(_build_tree(child))
+    except OSError as exc:
+        logger.debug("Failed to list %s: %s", run_dir, exc)
+    tree = {"name": run_id, "path": "", "type": "directory", "children": children}
     return {"run_id": run_id, "tree": tree}
 
 

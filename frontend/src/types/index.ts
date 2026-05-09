@@ -61,8 +61,14 @@ export interface ActiveRunState {
   status: string;
   output_dir: string;
   topic: string;
+  current_stage: number;
+  current_stage_name: string;
+  total_stages: number;
   stages_done?: number;
   stages_failed?: number;
+  elapsed_sec?: number;
+  start_time?: string;
+  is_active?: boolean;
   error?: string;
 }
 
@@ -81,6 +87,7 @@ export interface ArtifactContent {
   content: string;
   mime_type: string;
   path: string;
+  encoding?: string;
 }
 
 // ── HITL ──────────────────────────────────────────────────────
@@ -157,6 +164,22 @@ export interface EventMessage {
   timestamp: number;
 }
 
+// ── Doctor ────────────────────────────────────────────────────
+
+export interface DoctorCheck {
+  name: string;
+  status: 'pass' | 'fail' | 'warn';
+  detail: string;
+  fix: string;
+}
+
+export interface DoctorReport {
+  timestamp: string;
+  overall: 'pass' | 'fail';
+  checks: DoctorCheck[];
+  actionable_fixes: string[];
+}
+
 // ── Config ────────────────────────────────────────────────────
 
 export interface ConfigSummary {
@@ -167,6 +190,50 @@ export interface ConfigSummary {
     voice_enabled: boolean;
     dashboard_enabled: boolean;
   };
+}
+
+// ── Full Config (for settings page) ──────────────────────────
+
+export type FieldType = 'string' | 'int' | 'float' | 'boolean' | 'select' | 'password' | 'taglist' | 'text';
+
+export interface FieldMeta {
+  group: string;
+  label: string;
+  type: FieldType;
+  required: boolean;
+  options?: string[];
+  min?: number;
+  max?: number;
+  step?: number;
+  sensitive?: boolean;
+  placeholder?: string;
+  default?: unknown;
+}
+
+export interface ConfigGroup {
+  key: string;
+  label: string;
+  icon: string;
+}
+
+export interface ConfigFieldsResponse {
+  groups: ConfigGroup[];
+  fields: Record<string, FieldMeta>;
+}
+
+export interface FullConfigResponse {
+  config_path: string;
+  config: Record<string, unknown>;
+}
+
+export interface ConfigSaveRequest {
+  updates: Record<string, unknown>;
+}
+
+export interface ConfigSaveResponse {
+  success: boolean;
+  message: string;
+  config_path: string;
 }
 
 // ── Notification ──────────────────────────────────────────────
