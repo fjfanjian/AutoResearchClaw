@@ -19,6 +19,7 @@ from researchclaw.pipeline._helpers import (
     _chat_with_prompt,
     _extract_topic_keywords,
     _extract_yaml_block,
+    _find_prior_file,
     _get_evolution_overlay,
     _parse_jsonl_rows,
     _read_prior_artifact,
@@ -140,6 +141,13 @@ def _execute_search_strategy(
                     "sources": ["semantic_scholar", "google_scholar"],
                     "depth": 1,
                 },
+                {
+                    "name": "general_web",
+                    "queries": _fallback_queries[:3],
+                    "sources": ["web"],
+                    "max_results_per_query": 10,
+                    "purpose": "Verify existence and find documentation for architectures and tools",
+                },
             ],
             "filters": {
                 "min_year": 2020,
@@ -164,6 +172,15 @@ def _execute_search_strategy(
                 "name": "Semantic Scholar",
                 "type": "api",
                 "url": "https://ai4scholar.net/graph/v1/paper/search",
+                "status": "available",
+                "query": topic,
+                "verified_at": _utcnow_iso(),
+            },
+            {
+                "id": "web_general",
+                "name": "General Web Search",
+                "type": "web_search",
+                "url": "tavily",
                 "status": "available",
                 "query": topic,
                 "verified_at": _utcnow_iso(),
@@ -441,6 +458,32 @@ def _execute_literature_collect(
             tavily_key = config.web_search.tavily_api_key or os.environ.get(
                 config.web_search.tavily_api_key_env, ""
             )
+
+            # Collect seed URLs from topic verification (Stage-02) and search plan
+            # so the WebSearchAgent can crawl authoritative sources (docs, repos).
+            _seed_urls: list[str] = []
+            _tv_raw = _read_prior_artifact(run_dir, "topic_verification.json")
+            if _tv_raw:
+                try:
+                    _tv = _safe_json_loads(_tv_raw, {})
+                    if isinstance(_tv, dict):
+                        _urls = _tv.get("suggested_urls", [])
+                        if isinstance(_urls, list):
+                            _seed_urls.extend(u for u in _urls if isinstance(u, str))
+                except Exception:  # noqa: BLE001
+                    pass
+            if not _seed_urls:
+                _plan_raw = _read_prior_artifact(run_dir, "search_plan.yaml")
+                if _plan_raw:
+                    try:
+                        _plan = yaml.safe_load(_plan_raw)
+                        if isinstance(_plan, dict):
+                            _plan_urls = _plan.get("seed_urls", [])
+                            if isinstance(_plan_urls, list):
+                                _seed_urls.extend(u for u in _plan_urls if isinstance(u, str))
+                    except Exception:  # noqa: BLE001
+                        pass
+
             web_agent = WebSearchAgent(
                 tavily_api_key=tavily_key,
                 enable_scholar=config.web_search.enable_scholar,
@@ -452,6 +495,7 @@ def _execute_literature_collect(
             )
             web_result = web_agent.search_and_extract(
                 topic, search_queries=queries,
+                crawl_urls=_seed_urls or None,
             )
 
             # Convert Google Scholar papers into candidates
@@ -465,6 +509,48 @@ def _execute_literature_collect(
                     d["collected_at"] = _utcnow_iso()
                     candidates.append(d)
                     bibtex_entries.append(lit_paper.to_bibtex())
+
+            # Convert general web results (docs, GitHub, blogs) into candidates
+            import hashlib as _hashlib
+
+            _existing_urls: set[str] = set()
+            for c in candidates:
+                _u = str(c.get("url", "")).lower().strip()
+                if _u:
+                    _existing_urls.add(_u)
+            for wr in web_result.web_results:
+                if not wr.title or not (wr.snippet or wr.content):
+                    continue
+                url_lower = wr.url.lower().strip()
+                # Skip pure academic sources already covered by API search
+                if any(d in url_lower for d in ("arxiv.org", "openreview.net", "semanticscholar")):
+                    continue
+                if url_lower in _existing_urls:
+                    continue
+                _existing_urls.add(url_lower)
+                # Classify content type
+                if "github.com" in url_lower or "gitlab" in url_lower:
+                    _ctype = "code_repository"
+                elif "docs." in url_lower or "readthedocs" in url_lower or "/docs/" in url_lower:
+                    _ctype = "documentation"
+                elif "blog." in url_lower or "medium.com" in url_lower:
+                    _ctype = "blog"
+                elif "pypi.org" in url_lower:
+                    _ctype = "package"
+                else:
+                    _ctype = "web_article"
+                url_hash = _hashlib.sha256(wr.url.encode()).hexdigest()[:12]
+                candidates.append({
+                    "id": f"web-{url_hash}",
+                    "title": wr.title,
+                    "source": f"web_{_ctype}",
+                    "url": wr.url,
+                    "year": 2025,
+                    "abstract": (wr.content or wr.snippet or "")[:800],
+                    "content_type": _ctype,
+                    "is_web_result": True,
+                    "collected_at": _utcnow_iso(),
+                })
 
             # Save web search context for downstream stages
             web_context = web_result.to_context_string(max_length=20_000)
@@ -745,10 +831,37 @@ def _execute_knowledge_extract(
 ) -> StageResult:
     shortlist = _read_prior_artifact(run_dir, "shortlist.jsonl") or ""
 
+    # Inject topic verification note from Stage-02 if web evidence was found
+    _vf_path = _find_prior_file(run_dir, "topic_verification.json")
+    _verification_note = ""
+    if _vf_path is not None:
+        try:
+            _vf_data = _safe_json_loads(_vf_path.read_text(encoding="utf-8"), {})
+            if isinstance(_vf_data, dict) and _vf_data.get("verified"):
+                _titles = _vf_data.get("evidence_titles", [])
+                _urls = _vf_data.get("suggested_urls", [])
+                if _titles or _urls:
+                    _lines = ["### IMPORTANT: Topic Components Verified",
+                              "Web search confirmed these architectures/tools exist. "
+                              "Treat the following as authoritative sources:"]
+                    for t in _titles:
+                        _lines.append(f"- {t}")
+                    for u in _urls:
+                        _lines.append(f"  - {u}")
+                    _verification_note = "\n".join(_lines) + "\n"
+        except Exception:  # noqa: BLE001
+            pass
+
     # Inject web context from Stage 4 if available
     web_context = _read_prior_artifact(run_dir, "web_context.md") or ""
+    _web_context_part = ""
     if web_context:
-        shortlist = shortlist + "\n\n--- Web Search Context ---\n" + web_context[:10_000]
+        _web_context_part = "\n\n--- Web Search Context ---\n" + web_context[:10_000]
+
+    if _verification_note:
+        shortlist = shortlist + "\n" + _verification_note
+    if _web_context_part:
+        shortlist = shortlist + _web_context_part
 
     cards_dir = stage_dir / "cards"
     cards_dir.mkdir(parents=True, exist_ok=True)

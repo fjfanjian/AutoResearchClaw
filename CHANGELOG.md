@@ -56,3 +56,12 @@
 ### Changed
 
 - 更新 `.gitignore`，仅忽略前端依赖与构建缓存，保留源码与产物
+
+### Added
+
+- 管线架构/主题发现能力增强（解决管线未能发现已发布 YOLO26 的问题）：
+  - Stage-02 新增 web 搜索验证步骤，检查主题中核心技术组件（模型、库、工具）是否真实存在，产出 `topic_verification.json`
+  - Stage-03 搜索回退计划增加 `general_web` 策略和 `web_general` 源，覆盖通用网页搜索
+  - Stage-04 将通用网页搜索结果（官方文档、GitHub 仓库、博客等）转换为候选条目写入 `candidates.jsonl`，而非仅作为辅助上下文
+  - Stage-04 从 `topic_verification.json` 和 `search_plan.yaml` 收集种子 URL，传入 WebSearchAgent 进行权威内容抓取
+  - Stage-06 知识提取阶段注入架构验证说明，提示 LLM 将权威来源作为参考

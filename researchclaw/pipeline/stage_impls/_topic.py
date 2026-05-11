@@ -114,6 +114,101 @@ Investigate the topic with emphasis on reproducible methods and measurable outco
     )
 
 
+def _verify_topic_feasibility(
+    topic: str,
+    stage_dir: Path,
+    config: RCConfig,
+) -> dict | None:
+    """Quick web search to check whether technical components in the topic exist.
+
+    Looks for official documentation, code repositories, or package registries
+    that confirm the core architecture / library / tool is real.
+
+    Returns a verification dict with evidence, or None if web search is
+    disabled or fails (non-blocking).
+    """
+    if not config.web_search.enabled:
+        return None
+
+    import os
+
+    from researchclaw.web.search import WebSearchClient
+
+    tavily_key = config.web_search.tavily_api_key or os.environ.get(
+        config.web_search.tavily_api_key_env, ""
+    )
+    client = WebSearchClient(api_key=tavily_key)
+
+    # Generate search queries: shorten topic + fallback key phrases
+    queries = [topic[:60]]
+    from researchclaw.pipeline._helpers import _build_fallback_queries
+
+    for q in _build_fallback_queries(topic)[:2]:
+        if q not in queries:
+            queries.append(q)
+
+    try:
+        responses = client.search_multi(queries, max_results=5)
+    except Exception:  # noqa: BLE001
+        logger.debug("Topic feasibility web search failed (non-blocking)", exc_info=True)
+        return None
+
+    evidence: list[dict[str, str]] = []
+    verified = False
+    seen_urls: set[str] = set()
+
+    for resp in responses:
+        for r in resp.results:
+            if not r.title or not r.snippet:
+                continue
+            if r.url in seen_urls:
+                continue
+            seen_urls.add(r.url)
+
+            url_lower = r.url.lower()
+            if any(d in url_lower for d in ("docs.", "readthedocs", "/docs/", "documentation")):
+                result_type = "official_docs"
+            elif "github.com" in url_lower or "gitlab" in url_lower:
+                result_type = "code_repository"
+            elif "arxiv.org" in url_lower or "openreview.net" in url_lower:
+                result_type = "academic"
+            elif "blog." in url_lower or "medium.com" in url_lower:
+                result_type = "blog"
+            elif "pypi.org" in url_lower:
+                result_type = "package"
+            else:
+                result_type = "other"
+
+            if result_type in ("official_docs", "code_repository", "package"):
+                verified = True
+
+            evidence.append({"title": r.title, "url": r.url, "type": result_type})
+
+    verification = {
+        "topic": topic,
+        "verified": verified,
+        "evidence": evidence[:10],
+        "evidence_count": len(evidence),
+        "suggested_urls": [e["url"] for e in evidence[:5]],
+        "evidence_titles": [e["title"] for e in evidence[:5]],
+    }
+    (stage_dir / "topic_verification.json").write_text(
+        json.dumps(verification, indent=2), encoding="utf-8"
+    )
+
+    if verified:
+        logger.info(
+            "Topic feasibility: VERIFIED — web search found %d result(s)",
+            len(evidence),
+        )
+    else:
+        logger.debug(
+            "Topic feasibility: no strong web evidence (%d result(s))",
+            len(evidence),
+        )
+    return verification
+
+
 def _execute_problem_decompose(
     stage_dir: Path,
     run_dir: Path,
@@ -206,9 +301,18 @@ Derived from `goal.md` for topic: {config.research.topic}
         except Exception:  # noqa: BLE001
             logger.debug("IMP-35: Topic evaluation skipped (non-blocking)")
 
+    # --- Web-based topic feasibility check ---
+    # Verifies that key technical components (architectures, libraries, etc.)
+    # actually exist via web search. Produces topic_verification.json with
+    # evidence URLs consumed by Stages 03-06.
+    _extra_artifacts: list[str] = []
+    _tv = _verify_topic_feasibility(config.research.topic, stage_dir, config)
+    if _tv is not None:
+        _extra_artifacts.append("topic_verification.json")
+
     return StageResult(
         stage=Stage.PROBLEM_DECOMPOSE,
         status=StageStatus.DONE,
-        artifacts=("problem_tree.md",),
+        artifacts=("problem_tree.md", *_extra_artifacts),
         evidence_refs=("stage-02/problem_tree.md",),
     )

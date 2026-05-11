@@ -194,7 +194,7 @@ def search_semantic_scholar(
 
     headers: dict[str, str] = {"Accept": "application/json"}
     if api_key:
-        headers["x-api-key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
     data = _request_with_retry(url, headers)
     if data is None:
         return []
@@ -306,7 +306,7 @@ def batch_fetch_papers(
             "Content-Type": "application/json",
         }
         if api_key:
-            headers["x-api-key"] = api_key
+            headers["Authorization"] = f"Bearer {api_key}"
 
         body = json.dumps({"ids": chunk}).encode("utf-8")
 

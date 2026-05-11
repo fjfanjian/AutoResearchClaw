@@ -103,14 +103,14 @@ class FeedManager:
     ) -> list[dict[str, Any]]:
         """Fetch papers from Semantic Scholar API."""
         try:
-            from researchclaw.literature.semantic_scholar import search_s2
+            from researchclaw.literature.semantic_scholar import search_semantic_scholar
         except ImportError:
             logger.debug("semantic_scholar client not available")
             return []
 
         query = " ".join(domains) if domains else "machine learning"
         try:
-            results = search_s2(
+            results = search_semantic_scholar(
                 query,
                 limit=max_papers,
                 year_min=since_date.year,
@@ -118,15 +118,15 @@ class FeedManager:
             )
             return [
                 {
-                    "title": r.get("title", ""),
+                    "title": r.title,
                     "authors": [
-                        a.get("name", "") for a in r.get("authors", [])
+                        a.name for a in r.authors
                     ],
-                    "abstract": r.get("abstract", ""),
-                    "url": r.get("url", ""),
+                    "abstract": r.abstract,
+                    "url": r.url,
                     "source": "semantic_scholar",
-                    "published_date": str(r.get("year", since_date.year)),
-                    "citation_count": r.get("citationCount", 0),
+                    "published_date": str(r.year or since_date.year),
+                    "citation_count": r.citation_count,
                 }
                 for r in results
             ]
