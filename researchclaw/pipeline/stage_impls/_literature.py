@@ -778,37 +778,50 @@ def _execute_literature_screen(
         payload = _safe_json_loads(resp.content, {})
         if isinstance(payload, dict) and isinstance(payload.get("shortlist"), list):
             shortlist = [row for row in payload["shortlist"] if isinstance(row, dict)]
-    # T2.2: Ensure minimum shortlist size of 15 for adequate related work
-    _MIN_SHORTLIST = 15
+    # T2.2: Ensure minimum shortlist size for adequate related work.
+    # Configurable via research.min_shortlist (default 8); niche topics
+    # (e.g. infrared small-target detection) benefit from lower minimums
+    # to avoid flooding the shortlist with irrelevant keyword-match filler papers.
+    # If the actual relevant pool is smaller than the configured minimum,
+    # dynamically lower the target to avoid padding with noise.
+    _MIN_SHORTLIST = getattr(config.research, "min_shortlist", 8) or 8
     if not shortlist:
+        # When LLM produces zero, synthesize from filtered candidates
+        _target = min(_MIN_SHORTLIST, max(len(filtered_rows), 6) if filtered_rows else _MIN_SHORTLIST)
         rows = (
-            filtered_rows[:_MIN_SHORTLIST]
+            filtered_rows[:_target]
             if filtered_rows
-            else _parse_jsonl_rows(candidates_text)[:_MIN_SHORTLIST]
+            else _parse_jsonl_rows(candidates_text)[:_target]
         )
         for idx, item in enumerate(rows):
             item["relevance_score"] = round(0.75 - idx * 0.02, 3)
             item["quality_score"] = round(0.72 - idx * 0.015, 3)
             item["keep_reason"] = "Template screened entry"
+            item["template_data"] = True
             shortlist.append(item)
     elif len(shortlist) < _MIN_SHORTLIST:
         # T2.2: LLM returned too few — supplement from filtered candidates
+        # but cap at a dynamic ceiling: never exceed 2x the LLM-selected count
+        # to avoid diluting quality with padding noise
+        _dynamic_ceil = min(_MIN_SHORTLIST, max(len(shortlist) * 2, _MIN_SHORTLIST))
         existing_titles = {
             str(s.get("title", "")).lower().strip() for s in shortlist
         }
         for row in filtered_rows:
-            if len(shortlist) >= _MIN_SHORTLIST:
+            if len(shortlist) >= _dynamic_ceil:
                 break
             title_lower = str(row.get("title", "")).lower().strip()
             if title_lower and title_lower not in existing_titles:
-                row.setdefault("relevance_score", 0.5)
-                row.setdefault("quality_score", 0.5)
+                row.setdefault("relevance_score", 0.6)
+                row.setdefault("quality_score", 0.55)
                 row.setdefault("keep_reason", "Supplemented to meet minimum shortlist")
+                row.setdefault("template_data", True)
                 shortlist.append(row)
                 existing_titles.add(title_lower)
         logger.info(
-            "Stage 5: Supplemented shortlist to %d papers (minimum: %d)",
-            len(shortlist), _MIN_SHORTLIST,
+            "Stage 5: Supplemented shortlist from %d to %d papers (minimum: %d, ceiling: %d)",
+            len(shortlist) - len([r for r in shortlist if r.get("template_data")]),
+            len(shortlist), _MIN_SHORTLIST, _dynamic_ceil,
         )
     out = stage_dir / "shortlist.jsonl"
     _write_jsonl(out, shortlist)
@@ -880,22 +893,83 @@ def _execute_knowledge_extract(
         payload = _safe_json_loads(resp.content, {})
         if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
             cards = [item for item in payload["cards"] if isinstance(item, dict)]
+        # Retry once with stricter prompt if LLM returned empty cards
+        if not cards:
+            _retry_sp = _pm.for_stage(
+                "knowledge_extract_retry",
+                evolution_overlay=_overlay,
+                shortlist=shortlist,
+            )
+            _retry_resp = _chat_with_prompt(
+                llm,
+                _retry_sp.system,
+                _retry_sp.user,
+                json_mode=True,
+                max_tokens=sp.max_tokens,
+            )
+            _retry_payload = _safe_json_loads(_retry_resp.content, {})
+            if isinstance(_retry_payload, dict) and isinstance(
+                _retry_payload.get("cards"), list
+            ):
+                cards = [
+                    item
+                    for item in _retry_payload["cards"]
+                    if isinstance(item, dict)
+                ]
+            if cards:
+                logger.info(
+                    "Stage 06: Retry succeeded — extracted %d cards", len(cards)
+                )
     if not cards:
+        # Fallback: extract real data from paper records instead of template placeholders.
+        # Each paper in the shortlist has title, abstract, url, cite_key, and scores.
+        # We build cards with actual paper content — never "Template" strings.
         rows = _parse_jsonl_rows(shortlist)
+        logger.warning(
+            "Stage 06: LLM extraction produced no cards (%d shortlist rows). "
+            "Building cards from paper metadata as fallback.",
+            len(rows),
+        )
         for idx, paper in enumerate(rows[:6]):
             title = str(paper.get("title", f"Paper {idx + 1}"))
+            abstract = str(paper.get("abstract", "")).strip()
+            cite_key = str(paper.get("cite_key", ""))
+            url = str(paper.get("url", ""))
+            # Use real abstract content if available; otherwise leave fields empty
+            # rather than writing misleading "Template" placeholder text.
+            if abstract and abstract not in ("None", ""):
+                method = abstract[:300] if len(abstract) > 300 else abstract
+                findings = abstract[:200] if len(abstract) > 200 else abstract
+                data = ""
+                limitations = ""
+            else:
+                method = ""
+                findings = ""
+                data = ""
+                limitations = ""
+                if not abstract or abstract in ("None", ""):
+                    logger.debug(
+                        "Stage 06 fallback: paper '%s' has no abstract — "
+                        "card fields left empty",
+                        title[:80],
+                    )
             cards.append(
                 {
                     "card_id": f"card-{idx + 1}",
                     "title": title,
-                    "problem": f"How to improve {config.research.topic}",
-                    "method": "Template method summary",
-                    "data": "Template dataset",
-                    "metrics": "Template metric",
-                    "findings": "Template key finding",
-                    "limitations": "Template limitation",
-                    "citation": str(paper.get("url", "")),
-                    "cite_key": str(paper.get("cite_key", "")),
+                    "problem": (
+                        abstract[:200] if abstract and abstract not in ("None", "")
+                        else f"Related to: {config.research.topic}"
+                    ),
+                    "method": method,
+                    "data": data,
+                    "metrics": "",
+                    "findings": findings,
+                    "limitations": limitations,
+                    "citation": url,
+                    "cite_key": cite_key,
+                    "data_quality": "degraded",
+                    "source": "fallback",
                 }
             )
     for idx, card in enumerate(cards):

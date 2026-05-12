@@ -94,8 +94,8 @@ async def start_pipeline(req: PipelineStartRequest) -> PipelineStartResponse:
     from datetime import datetime, timezone
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    topic_hash = hashlib.sha256(config.research.topic.encode()).hexdigest()[:6]
-    run_id = f"rc-{ts}-{topic_hash}"
+    project_hash = hashlib.sha256(config.project.name.encode()).hexdigest()[:6]
+    run_id = f"rc-{ts}-{project_hash}"
     run_dir = _validated_run_dir(run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
 

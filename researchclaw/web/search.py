@@ -14,11 +14,46 @@ from __future__ import annotations
 import logging
 import os
 import re
+import ssl
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, ProxyHandler, build_opener, HTTPSHandler
 from urllib.parse import quote_plus
+
+# TLS 1.2 context for DuckDuckGo fallback — TLS 1.3 connections to DDG/CDN
+# IPs are routinely reset by network intermediaries (ECH interference),
+# while TLS 1.2 (cleartext SNI) passes through.
+_DDG_SSL_CONTEXT = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+_DDG_SSL_CONTEXT.maximum_version = ssl.TLSVersion.TLSv1_2
+
+# Proxy-aware opener for DuckDuckGo searches. When a proxy is configured
+# via environment variables, the proxy handles TLS negotiation with DDG so
+# we use the default SSL context. On direct connections we pin TLS 1.2 to
+# avoid ECH interference that routinely resets TLS 1.3 to DDG/CDN IPs.
+_DDG_OPENER = None
+
+
+def _get_ddg_opener():
+    """Return a proxy-aware opener, with TLS 1.2 pinned for direct connections."""
+    global _DDG_OPENER
+    if _DDG_OPENER is not None:
+        return _DDG_OPENER
+
+    proxy_url = ""
+    for env_var in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+        proxy_url = os.environ.get(env_var, "")
+        if proxy_url:
+            break
+
+    handlers = []
+    if proxy_url:
+        handlers.append(ProxyHandler({"https": proxy_url, "http": proxy_url}))
+    else:
+        handlers.append(HTTPSHandler(context=_DDG_SSL_CONTEXT))
+
+    _DDG_OPENER = build_opener(*handlers)
+    return _DDG_OPENER
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +236,8 @@ class WebSearchClient:
         })
 
         try:
-            resp = urlopen(req, timeout=15)  # noqa: S310
+            opener = _get_ddg_opener()
+            resp = opener.open(req, timeout=15)
             html = resp.read().decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             elapsed = time.monotonic() - t0

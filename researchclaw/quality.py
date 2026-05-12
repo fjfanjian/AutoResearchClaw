@@ -185,3 +185,64 @@ def check_strict_quality(text: str, *, threshold: float = 0.05) -> tuple[bool, s
         )
 
     return True, f"Quality check passed: template_ratio={report.template_ratio:.2%}"
+
+
+def check_card_quality(card_texts: list[str]) -> tuple[bool, str]:
+    """Quality gate for knowledge-extraction cards.
+
+    Checks both template content detection and cross-card field
+    redundancy.  Returns (passed, message).
+
+    Redundancy is a strong signal: if all cards share the exact same
+    method/data/metrics/findings/limitations text, the extraction
+    was either a fallback or the LLM produced undifferentiated output.
+    """
+    if not card_texts:
+        return True, "No cards to check"
+
+    # 1. Template detection on combined text
+    _combined = "\n".join(card_texts)
+    _tpl_ratio = compute_template_ratio(_combined)
+
+    # 2. Cross-card field redundancy
+    import re as _cre
+
+    _field_pattern = re.compile(
+        r"^## (Method|Data|Metrics|Findings|Limitations)\s*\n+"
+        r"(.+?)(?=\n## |\n*$)",
+        re.MULTILINE | re.DOTALL,
+    )
+    _field_values: dict[str, set[str]] = {
+        "Method": set(),
+        "Data": set(),
+        "Metrics": set(),
+        "Findings": set(),
+        "Limitations": set(),
+    }
+    _total_fields = 0
+    _redundant_fields = 0
+    for _ct in card_texts:
+        for _m in _field_pattern.finditer(_ct):
+            _field_name = _m.group(1)
+            _field_val = _m.group(2).strip()
+            if _field_val and _field_name in _field_values:
+                _total_fields += 1
+                if _field_val in _field_values[_field_name]:
+                    _redundant_fields += 1
+                else:
+                    _field_values[_field_name].add(_field_val)
+
+    _redundancy_ratio = _redundant_fields / _total_fields if _total_fields else 0.0
+
+    # 3. Combined decision
+    if _redundancy_ratio > 0.5 or _tpl_ratio > 0.15:
+        return False, (
+            f"Card quality low: template_ratio={_tpl_ratio:.2%}, "
+            f"field_redundancy={_redundancy_ratio:.0%} "
+            f"({_redundant_fields}/{_total_fields} fields identical across cards)"
+        )
+
+    return True, (
+        f"Card quality OK: template_ratio={_tpl_ratio:.2%}, "
+        f"field_redundancy={_redundancy_ratio:.0%}"
+    )

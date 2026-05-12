@@ -88,6 +88,11 @@ _research_fields: dict[str, dict[str, Any]] = {
         "group": "research", "label": "优雅降级", "type": "boolean",
         "required": False,
     },
+    "research.min_shortlist": {
+        "group": "research", "label": "最短文献列表", "type": "int",
+        "required": False, "min": 3, "max": 30,
+        "description": "文献筛选阶段（Stage 5）保留的最小论文数。细粒度领域（如红外小目标检测）建议设 5-8，避免用不相关的关键词匹配论文填充。",
+    },
 }
 CONFIG_FIELD_META.update(_research_fields)
 

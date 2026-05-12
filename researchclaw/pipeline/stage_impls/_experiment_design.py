@@ -29,6 +29,50 @@ from researchclaw.prompts import PromptManager
 
 logger = logging.getLogger(__name__)
 
+# Known CV/ML detection/segmentation datasets (expandable)
+_KNOWN_DOMAIN_DATASETS = [
+    # Infrared small target detection
+    "SIRST", "IRSTD-1k", "IRSTD-1K", "DroneVehicle", "NUDT-SIRST",
+    # Aerial/UAV detection
+    "VisDrone", "UAVDT", "DOTA", "DIOR", "xView",
+    # General object detection
+    "COCO", "VOC", "ImageNet", "OpenImages",
+    # Segmentation
+    "Cityscapes", "ADE20K", "BDD100K", "KITTI",
+    # Medical
+    "BraTS", "LIDC", "LUNA", "NIH ChestX-ray",
+]
+
+_STOPLIST_ACRONYMS = {
+    "the", "and", "for", "our", "gpu", "cpu", "rtx", "cuda",
+    "api", "url", "doi", "pdf", "ssh", "http", "https",
+    "rgb", "fpga", "fp16", "fp32", "int8", "relu", "adam",
+    "sgd", "sota", "map", "iou", "psnr", "ssim",
+}
+
+
+def _find_domain_datasets(topic: str, hypotheses_text: str) -> list[str]:
+    """Extract candidate dataset names from topic and hypotheses text.
+
+    Returns a deduplicated list of dataset names found in the text,
+    prioritizing known datasets first.
+    """
+    _search_text = f"{topic} {hypotheses_text}"
+    _datasets: list[str] = []
+    for _ds in _KNOWN_DOMAIN_DATASETS:
+        if _ds.lower() in _search_text.lower():
+            _datasets.append(_ds)
+    if not _datasets:
+        # Broader heuristic: look for capitalized/acronym-like patterns
+        _caps_patterns = re.findall(
+            r'\b([A-Z][A-Z0-9]+(?:-[A-Za-z0-9]+)*)\b', _search_text
+        )
+        for _cp in _caps_patterns:
+            if len(_cp) >= 3 and _cp.lower() not in _STOPLIST_ACRONYMS:
+                if _cp not in _datasets:
+                    _datasets.append(_cp)
+    return _datasets[:2]
+
 
 def _execute_experiment_design(
     stage_dir: Path,
@@ -241,7 +285,7 @@ def _execute_experiment_design(
                     "topic": config.research.topic,
                     "generated": _utcnow_iso(),
                     "objectives": ["Evaluate hypotheses with controlled experiments"],
-                    "datasets": ["primary_dataset"],
+                    "datasets": _find_domain_datasets(config.research.topic, _hyp_text) or ["primary_dataset"],
                     "baselines": _baseline_candidates[:3] or ["baseline_1", "baseline_2"],
                     "proposed_methods": _method_candidates[:3] or ["proposed_method"],
                     "ablations": ["without_key_component", "simplified_version"],
@@ -251,23 +295,32 @@ def _execute_experiment_design(
                 }
 
     if plan is None:
-        # BUG-12: Use domain-aware names instead of fully generic placeholders
-        _topic_prefix = config.research.topic.split()[0] if config.research.topic else "method"
+        # BUG-12: Use domain-aware names instead of fully generic placeholders.
+        # Extract candidate dataset names from topic text and hypotheses (if available).
+        # This helps narrow the search space even when the BenchmarkAgent or LLM fails.
+        _topic_prefix = (
+            config.research.topic.split()[0] if config.research.topic else "method"
+        )
+        _hyp_text = _read_prior_artifact(run_dir, "hypotheses.md") or ""
+        _domain_datasets = _find_domain_datasets(config.research.topic, _hyp_text)
+        _datasets = _domain_datasets if _domain_datasets else ["primary_dataset", "secondary_dataset"]
         logger.warning(
             "Stage 09: LLM failed to produce valid experiment plan YAML. "
-            "Using topic-derived fallback."
+            "Using topic-derived fallback with datasets=%s (domain hints: %s).",
+            _datasets, "detected" if _domain_datasets else "none",
         )
         plan = {
             "topic": config.research.topic,
             "generated": _utcnow_iso(),
             "objectives": ["Evaluate hypotheses with controlled experiments"],
-            "datasets": ["primary_dataset", "secondary_dataset"],
+            "datasets": _datasets,
             "baselines": [f"{_topic_prefix}_baseline_1", f"{_topic_prefix}_baseline_2"],
             "proposed_methods": [f"{_topic_prefix}_proposed", f"{_topic_prefix}_variant"],
             "ablations": ["without_key_component", "simplified_version"],
             "metrics": [config.experiment.metric_key, "secondary_metric"],
             "risks": ["validity threats", "confounding variables"],
             "compute_budget": {"max_gpu": 1, "max_hours": 4},
+            "_fallback_source": "topic-derived",
         }
     # ── BA: BenchmarkAgent — intelligent dataset/baseline selection ──────
     _benchmark_plan = None

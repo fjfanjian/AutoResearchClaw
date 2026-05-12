@@ -150,6 +150,23 @@ stages:
       Return JSON: {cards:[{card_id,title,cite_key,problem,method,data,metrics,findings,limitations,citation}]}.
 
       IMPORTANT: If the input contains cite_key fields, preserve them exactly in the output.
+      Fill EVERY field with concrete details from the paper — never leave fields empty
+      or use placeholder text like "Template", "N/A", or "Not available".
+
+      Shortlist:
+
+      {shortlist}'
+  knowledge_extract_retry:
+    json_mode: true
+    system: You extract structured research evidence from academic papers. You MUST extract every field.
+    user: 'CRITICAL: Extract detailed knowledge cards. Leave NO field empty.
+
+      For each paper in the shortlist, fill card_id, title, cite_key, problem, method,
+      data, metrics, findings, limitations, citation with CONCRETE information from the paper.
+      If a field is genuinely not mentioned in the paper text, write "Not discussed in paper"
+      — but prefer extracting whatever is available. Never use "Template" or generic placeholders.
+
+      Return JSON: {cards:[{card_id,title,cite_key,problem,method,data,metrics,findings,limitations,citation}]}
 
       Shortlist:
 

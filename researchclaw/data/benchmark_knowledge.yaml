@@ -105,6 +105,125 @@ domains:
         paper: "Howard et al., MobileNetV3, ICCV 2019"
         pip: []
 
+  object_detection:
+    required_baselines:
+      - YOLOv8
+      - RT-DETR
+    keywords:
+      - object detection
+      - target detection
+      - bounding box
+      - detection model
+      - real-time detector
+      - aerial detection
+      - uav detection
+    standard_benchmarks:
+      - name: COCO 2017
+        tier: 2
+        domain: object_detection
+        size_mb: 25000
+        classes: 80
+        samples: 118287
+        metrics: [mAP, mAP50, mAP75]
+        api: "torchvision.datasets.CocoDetection(root='/workspace/data/coco/train2017', annFile='/workspace/data/coco/annotations/instances_train2017.json', transform=transform)"
+        note: "Standard detection benchmark — large, diverse, multi-scale"
+      - name: VOCDataset
+        tier: 1
+        domain: object_detection
+        size_mb: 2000
+        classes: 20
+        metrics: [mAP, mAP50]
+        api: "torchvision.datasets.VOCDetection(root='/workspace/data', year='2012', image_set='train', download=True, transform=transform)"
+      - name: VisDrone
+        tier: 2
+        domain: aerial_detection
+        size_mb: 25000
+        classes: 10
+        samples: 10209
+        metrics: [mAP, mAP50]
+        api: "Custom download from https://github.com/VisDrone/VisDrone-Dataset"
+        note: "UAV aerial image object detection — drone perspective, small targets, occlusion"
+    common_baselines:
+      - name: YOLOv8-nano
+        source: "ultralytics.YOLO('yolov8n.pt')"
+        paper: "Jocher et al., Ultralytics YOLOv8, 2023"
+        pip: [ultralytics]
+      - name: YOLOv8-small
+        source: "ultralytics.YOLO('yolov8s.pt')"
+        paper: "Jocher et al., Ultralytics YOLOv8, 2023"
+        pip: [ultralytics]
+      - name: RT-DETR
+        source: "transformers.AutoModelForObjectDetection.from_pretrained('PekingU/rtdetr_r18vd')"
+        paper: "Zhao et al., DETRs Beat YOLOs, CVPR 2024"
+        pip: [transformers, timm]
+      - name: DETR (ResNet-50)
+        source: "transformers.DetrForObjectDetection.from_pretrained('facebook/detr-resnet-50')"
+        paper: "Carion et al., End-to-End Object Detection with Transformers, ECCV 2020"
+        pip: [transformers]
+
+  infrared_small_target_detection:
+    keywords:
+      - infrared small target
+      - infrared target detection
+      - irst
+      - small target detection
+      - dim target
+      - irstd
+      - sirst
+      - thermal target
+      - infrared aerial
+      - drone vehicle
+    standard_benchmarks:
+      - name: SIRST
+        tier: 2
+        domain: infrared_small_target
+        size_mb: 30
+        classes: 1
+        samples: 427
+        metrics: [mAP, pixel_AUC, Pd, Fa]
+        api: "Custom download from https://github.com/YimianDai/sirst"
+        note: "Standard Benchmark for Infrared Small Target Detection — 427 images, single-class"
+      - name: IRSTD-1k
+        tier: 2
+        domain: infrared_small_target
+        size_mb: 200
+        classes: 1
+        samples: 1001
+        metrics: [mAP, IoU, Pd, Fa]
+        api: "Custom download from https://github.com/USTC-SRI-Lab/IRSTD-1K"
+        note: "Largest public IR small target detection dataset (1001 images)"
+      - name: DroneVehicle
+        tier: 2
+        domain: uav_detection
+        size_mb: 3500
+        classes: 5
+        samples: 28439
+        metrics: [mAP, mAP50]
+        api: "Custom download from https://github.com/VisDrone/DroneVehicle"
+        note: "RGB-Infrared paired UAV dataset with 5 vehicle categories"
+      - name: NUDT-SIRST
+        tier: 2
+        domain: infrared_small_target
+        size_mb: 50
+        classes: 1
+        samples: 341
+        metrics: [mAP, Pd, Fa]
+        api: "Custom download from https://github.com/YeRen123455/NUDT-SIRST-Sea"
+        note: "Maritime IRST dataset — ocean/sea backgrounds"
+    common_baselines:
+      - name: ACM (U-Net)
+        source: "Custom: Asymmetric Context Modulation U-Net"
+        paper: "Dai et al., ACM U-Net, WACV 2021"
+        pip: []
+      - name: DNANet
+        source: "Custom: Dense Nested Attention Network"
+        paper: "Li et al., DNANet, IEEE TIP 2022"
+        pip: []
+      - name: TarDAL
+        source: "Custom: Target-Aware Dual Adversarial Learning"
+        paper: "Liu et al., TarDAL, CVPR 2022"
+        pip: []
+
   knowledge_distillation:
     required_baselines:
       - KD (Hinton)

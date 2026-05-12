@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -146,10 +147,16 @@ def _resolve_config_or_exit(args: argparse.Namespace) -> Path | None:
     return path
 
 
-def _generate_run_id(topic: str) -> str:
+def _generate_run_id(project_name: str) -> str:
+    """Generate a stable run ID from the project name.
+
+    Uses SHA256 of the project name (not the topic) so that topic
+    refinements within the same project reuse the same directory and
+    checkpoint, avoiding hash-collision resumption bugs.
+    """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    topic_hash = hashlib.sha256(topic.encode()).hexdigest()[:6]
-    return f"rc-{ts}-{topic_hash}"
+    project_hash = hashlib.sha256(project_name.encode()).hexdigest()[:6]
+    return f"rc-{ts}-{project_hash}"
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -208,13 +215,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"FAILED — {msg}", file=sys.stderr)
             return 1
 
-    run_id = _generate_run_id(config.research.topic)
+    run_id = _generate_run_id(config.project.name)
     run_dir = Path(output or f"artifacts/{run_id}")
 
     # BUG-119: When --resume without --output, search for the most recent
-    # existing run directory that matches the topic and has a checkpoint.
+    # existing run directory that matches the project and has a checkpoint.
     if resume and not output:
-        topic_hash = hashlib.sha256(config.research.topic.encode()).hexdigest()[:6]
+        project_hash = hashlib.sha256(config.project.name.encode()).hexdigest()[:6]
         artifacts_root = Path("artifacts")
         if artifacts_root.is_dir():
             candidates = sorted(
@@ -222,7 +229,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     d for d in artifacts_root.iterdir()
                     if d.is_dir()
                     and d.name.startswith("rc-")
-                    and d.name.endswith(f"-{topic_hash}")
+                    and d.name.endswith(f"-{project_hash}")
                     and (d / "checkpoint.json").exists()
                 ),
                 key=lambda d: d.name,
@@ -232,10 +239,26 @@ def cmd_run(args: argparse.Namespace) -> int:
                 run_dir = candidates[0]
                 run_id = run_dir.name
                 print(f"Found existing run to resume: {run_dir}")
+                # Detect topic mismatch between checkpoint and current config.
+                # When the user changes the topic between runs, use the NEW topic
+                # instead of silently restoring the old one from the checkpoint.
+                cp_path = run_dir / "checkpoint.json"
+                if cp_path.exists():
+                    try:
+                        cp_data = json.loads(cp_path.read_text(encoding="utf-8"))
+                        cp_topic = cp_data.get("topic", "")
+                        if cp_topic and cp_topic != config.research.topic:
+                            print(
+                                f"Topic changed — using new topic:\n"
+                                f"  Old: {cp_topic[:100]}\n"
+                                f"  New: {config.research.topic[:100]}"
+                            )
+                    except (json.JSONDecodeError, KeyError):
+                        pass
             else:
                 print(
                     "Warning: --resume specified but no checkpoint found "
-                    f"for topic hash '{topic_hash}'. Starting new run.",
+                    f"for project '{config.project.name}'. Starting new run.",
                     file=sys.stderr,
                 )
 

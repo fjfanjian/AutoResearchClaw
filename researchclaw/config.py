@@ -139,6 +139,7 @@ class ResearchConfig:
     daily_paper_count: int = 0
     quality_threshold: float = 0.0
     graceful_degradation: bool = True
+    min_shortlist: int = 8
 
 
 @dataclass(frozen=True)
@@ -782,6 +783,7 @@ class RCConfig:
                 daily_paper_count=int(research.get("daily_paper_count", 0)),
                 quality_threshold=float(research.get("quality_threshold", 0.0)),
                 graceful_degradation=bool(research.get("graceful_degradation", True)),
+                min_shortlist=int(research.get("min_shortlist", 15)),
             ),
             runtime=RuntimeConfig(
                 timezone=runtime["timezone"],

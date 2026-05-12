@@ -630,6 +630,51 @@ def execute_stage(
                     )
                     break
 
+    # --- Content quality check for card-generating stages ---
+    # Stage 06 (KNOWLEDGE_EXTRACT) produces cards/ that should contain
+    # extracted paper content — not template placeholders.  Template data
+    # here indicates the LLM extraction failed and the fallback was triggered.
+    if (
+        result.status == StageStatus.DONE
+        and stage == Stage.KNOWLEDGE_EXTRACT
+    ):
+        try:
+            from researchclaw.quality import check_card_quality as _check_cards
+
+            cards_dir = stage_dir / "cards"
+            if cards_dir.is_dir():
+                _card_texts: list[str] = []
+                for _cf in sorted(cards_dir.glob("card-*.md")):
+                    if _cf.is_file():
+                        _card_texts.append(_cf.read_text(encoding="utf-8"))
+                if _card_texts:
+                    _passed, _msg = _check_cards(_card_texts)
+                    _degraded = sum(
+                        1
+                        for _ct in _card_texts
+                        if "data_quality: degraded" in _ct
+                        or "source: fallback" in _ct
+                    )
+                    _total = len(_card_texts)
+                    logger.info(
+                        "Stage 06 card quality: %s (degraded=%d/%d)",
+                        _msg, _degraded, _total,
+                    )
+                    if not _passed or _degraded / max(_total, 1) > 0.3:
+                        logger.warning(
+                            "Stage 06 cards have degraded quality - %s", _msg,
+                        )
+                        result = StageResult(
+                            stage=result.stage,
+                            status=StageStatus.DONE,
+                            artifacts=result.artifacts,
+                            error=f"Card quality degraded: {_msg}",
+                            decision="meta_review",
+                            evidence_refs=result.evidence_refs,
+                        )
+        except Exception:  # noqa: BLE001
+            logger.debug("Card quality check skipped (non-blocking)", exc_info=True)
+
     # --- MetaClaw PRM quality gate evaluation ---
     try:
         mc_bridge = getattr(config, "metaclaw_bridge", None)

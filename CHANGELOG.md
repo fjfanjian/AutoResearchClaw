@@ -6,6 +6,11 @@
 
 ### Added
 
+- 新增卡片质量门控（template/redundancy 检测），自动标记降级卡片进入 meta_review
+- 新增 knowledge_extract 空结果重试机制，使用更严格的 prompt 二次提取
+- 新增领域数据集自动发现，实验设计方案使用真实数据集名称替代占位符
+- 新增 `min_shortlist` 可配置参数（默认 8），支持窄领域灵活调整筛选阈值
+- 新增 `object_detection` 领域基准知识库条目（VisDrone、COCO 等）
 - 新增配置管理 API 端点（字段元数据、配置读取/保存、环境诊断），支持 Web 端动态编辑配置
 - 新增浏览器配置编辑器 — 按类别分组的动态表单，支持字符串/整数/浮点/布尔/下拉/密码/标签列表/多行文本等字段类型
 - 新增实时日志流推送（WebSocket）与阶段事件追踪（阶段开始/完成/失败，带时间戳）
@@ -17,6 +22,9 @@
 
 ### Changed
 
+- 改进 literature shortlist 补充策略：动态上限避免噪声稀释，提升补充论文评分
+- 改进 run_id 生成：基于 project name 而非 topic，确保同项目 checkpoint 稳定复用
+- DuckDuckGo 搜索增加 TLS 1.2 回退与代理感知，解决 ECH 干扰导致的连接重置
 - 重构 health 模块，提取 `_run_checks_from_config()` 供 Web 上下文复用
 - 改进 artifact 树形列表的错误处理，添加 OSError 保护
 
