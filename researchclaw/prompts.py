@@ -1532,14 +1532,40 @@ _DEFAULT_STAGES: dict[str, dict[str, Any]] = {
     # ── Phase B: Literature Discovery ────────────────────────────────────
     "search_strategy": {
         "system": (
-            "You design literature retrieval strategies and source verification plans."
+            "You design literature retrieval strategies and source verification plans.\n"
+            "You aim for COMPREHENSIVE coverage — a good research paper needs 30-60 references.\n\n"
+            "CRITICAL — DOMAIN ANCHORING RULE:\n"
+            "Every search query you generate MUST include at least 2 domain-specific\n"
+            "keywords extracted from the Topic (e.g. the concrete task name, modality,\n"
+            "platform, dataset family, or evaluation metric).  Do NOT reduce the Topic\n"
+            "to vague cross-domain concepts alone.  A query like \"edge blurring\n"
+            "background ambiguity\" is USELESS because it will return papers from\n"
+            "cosmology, medical imaging, and graphics.  You must inject the domain\n"
+            "anchors — e.g. \"infrared small target edge blurring UAV\", \"IRSTD\n"
+            "background suppression transformer\".\n\n"
+            "Before finalising, self-check: for each query, point to at least 2 domain\n"
+            "tokens from the Topic that appear in that query.  If you cannot, the query\n"
+            "is TOO GENERIC — rewrite it."
         ),
         "user": (
-            "Create a merged search strategy package.\n"
-            "Return a JSON object with keys: search_plan_yaml, sources.\n"
-            "search_plan_yaml must be valid YAML text.\n"
-            "sources must include id,name,type,url,status,query,verified_at.\n"
-            "Topic: {topic}\n"
+            "Create a merged search strategy package.\n\n"
+            "Return a JSON object with keys: search_plan_yaml, sources.\n\n"
+            "search_plan_yaml must be valid YAML text.  You MUST follow this EXACT\n"
+            "structure (this is the ONLY accepted format):\n\n"
+            "  search_strategies:\n"
+            "    - name: strategy_name\n"
+            "      queries:\n"
+            "        - \"keyword query 1\"\n"
+            "        - \"keyword query 2\"\n\n"
+            "Include at least 3 strategies, each with 3-5 short keyword queries\n"
+            "(3-8 words each). Generate at least 8 total queries.\n\n"
+            "DOMAIN ANCHORING: EVERY single query must include ≥2 domain-specific terms\n"
+            "from the Topic (the concrete task/modality/platform/dataset — NOT generic\n"
+            "words like \"mitigating\" or \"investigation\").\n\n"
+            "GOOD queries: \"infrared small target detection UAV edge blur\",\n"
+            "\"IRSTD background suppression transformer\"\n"
+            "BAD queries: \"edge blurring background ambiguity\", \"mitigating edge survey\"\n\n"
+            "Topic: {topic}\n\n"
             "Problem tree:\n{problem_tree}"
         ),
         "json_mode": True,
@@ -1604,6 +1630,19 @@ _DEFAULT_STAGES: dict[str, dict[str, Any]] = {
             "data,metrics,findings,limitations,citation}]}.\n"
             "IMPORTANT: If the input contains cite_key fields, preserve them "
             "exactly in the output.\n"
+            "Shortlist:\n{shortlist}"
+        ),
+        "json_mode": True,
+    },
+    "knowledge_extract_retry": {
+        "system": "You extract structured research evidence from academic papers. You MUST extract every field.",
+        "user": (
+            "CRITICAL: Extract detailed knowledge cards. Leave NO field empty.\n"
+            "For each paper in the shortlist, fill card_id, title, cite_key, problem, method, "
+            "data, metrics, findings, limitations, citation with CONCRETE information from the paper. "
+            "If a field is genuinely not mentioned in the paper text, write 'Not discussed in paper' "
+            "— but prefer extracting whatever is available. Never use 'Template' or generic placeholders.\n"
+            "Return JSON: {cards:[{card_id,title,cite_key,problem,method,data,metrics,findings,limitations,citation}]}\n"
             "Shortlist:\n{shortlist}"
         ),
         "json_mode": True,

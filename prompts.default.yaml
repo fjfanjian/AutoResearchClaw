@@ -398,14 +398,65 @@ stages:
       {context}'
   search_strategy:
     json_mode: true
-    system: You design literature retrieval strategies and source verification plans. You aim for COMPREHENSIVE coverage — a good research paper needs 30-60 references.
-    user: 'Create a merged search strategy package.
+    system: |-
+      You design literature retrieval strategies and source verification plans.
+      You aim for COMPREHENSIVE coverage — a good research paper needs 30-60
+      references.
+
+      CRITICAL — DOMAIN ANCHORING RULE:
+      Every search query you generate MUST include at least 2 domain-specific
+      keywords extracted from the Topic (e.g. the concrete task name, modality,
+      platform, dataset family, or evaluation metric).  Do NOT reduce the Topic
+      to vague cross-domain concepts alone.  A query like "edge blurring
+      background ambiguity" is USELESS because it will return papers from
+      cosmology, medical imaging, and graphics.  You must inject the domain
+      anchors — e.g. "infrared small target edge blurring UAV", "IRSTD
+      background suppression transformer".
+
+      Before finalising, self-check: for each query, point to at least 2 domain
+      tokens from the Topic that appear in that query.  If you cannot, the query
+      is TOO GENERIC — rewrite it.
+    user: |-
+      Create a merged search strategy package.
 
       Return a JSON object with keys: search_plan_yaml, sources.
 
-      search_plan_yaml must be valid YAML text with search_strategies containing at least 3 strategies,
-      each with 3-5 diverse keyword queries (short, 3-6 words each). Generate at least 8 total queries.
-      Cover: core topic, related methods, benchmarks/datasets, theoretical foundations, applications.
+      search_plan_yaml must be valid YAML text.  You MUST follow this EXACT
+      structure (this is the ONLY accepted format):
+
+      ```yaml
+      search_strategies:
+        - name: strategy_name
+          queries:
+            - "keyword query 1"
+            - "keyword query 2"
+      ```
+
+      Example for a topic about "infrared small target detection from UAVs":
+      ```yaml
+      search_strategies:
+        - name: core_topic_domain_anchored
+          queries:
+            - "infrared small target detection UAV edge blur"
+            - "IRSTD background suppression transformer"
+            - "thermal drone dim target survey"
+        - name: related_methods
+          queries:
+            - "self-supervised infrared target backbone DINOv3"
+            - "domain adaptation visible infrared detection"
+        - name: benchmarks_and_foundations
+          queries:
+            - "SIRST IRSTD-1k small target benchmark"
+            - "edge-aware loss infrared detection"
+      ```
+
+      RULES:
+      1. Use EXACTLY the structure above (search_strategies: [{name:, queries:}, ...]).
+      2. Each query is a short keyword phrase (3-8 words).
+      3. EVERY query MUST contain ≥ 2 domain-specific words from the Topic
+         (modality, task, platform, dataset — e.g. infrared, UAV, detection, IRSTD).
+      4. NEVER use generic queries without domain anchors (e.g. "edge blurring
+         background" is FORBIDDEN — it must be "infrared edge blurring detection").
 
       sources must include id,name,type,url,status,query,verified_at.
 

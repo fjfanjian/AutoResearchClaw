@@ -210,10 +210,24 @@ def _execute_search_strategy(
         encoding="utf-8",
     )
 
-    # F1.5: Extract queries from plan for Stage 4 real literature search
+    # F1.5: Extract queries from plan for Stage 4 real literature search.
+    # LLMs produce diverse YAML structures — we handle all of them:
+    #   Format A: search_strategies: [{name: ..., queries: [...]}, ...]
+    #   Format B: search_queries: [{id: ..., query: "..."}, ...]
+    #   Format C: search_strings: {label: [...]} or search_terms: {label: [...]}
+    #   Format D: sources: [{query: "..."}, ...] (fallback from source list)
     queries_list: list[str] = []
     year_min = 2020
+
+    def _clean_bool_query(q: str) -> str:
+        """Strip boolean operators / parens / quotes from a structured query string."""
+        s = re.sub(r'[()]', ' ', q)
+        s = re.sub(r'\b(AND|OR|NOT)\b', '', s)
+        s = s.replace('"', ' ')
+        return re.sub(r'\s{2,}', ' ', s).strip()
+
     if isinstance(plan, dict):
+        # Format A: search_strategies with queries
         strategies = plan.get("search_strategies", [])
         if isinstance(strategies, list):
             for strat in strategies:
@@ -221,6 +235,37 @@ def _execute_search_strategy(
                     qs = strat.get("queries", [])
                     if isinstance(qs, list):
                         queries_list.extend(str(q) for q in qs if q)
+
+        # Format B: search_queries with individual query strings
+        if not queries_list:
+            for _key in ("search_queries", "search_terms", "search_strings"):
+                sq = plan.get(_key, None)
+                if isinstance(sq, list):
+                    for item in sq:
+                        if isinstance(item, dict):
+                            q = str(item.get("query", "")).strip()
+                            if q:
+                                queries_list.append(_clean_bool_query(q))
+                        elif isinstance(item, str) and len(item) > 2:
+                            queries_list.append(item)
+                elif isinstance(sq, dict):
+                    for _lk, _lv in sq.items():
+                        if isinstance(_lv, list):
+                            queries_list.extend(str(x) for x in _lv if x)
+                        elif isinstance(_lv, str) and len(_lv) > 2:
+                            queries_list.append(_lv)
+
+        # Format D: sources[{query: ...}] (last resort)
+        if not queries_list:
+            srcs = plan.get("sources", [])
+            if isinstance(srcs, list):
+                for s in srcs:
+                    if isinstance(s, dict):
+                        q = str(s.get("query", "")).strip()
+                        if q and len(q) > 3:
+                            queries_list.append(_clean_bool_query(q))
+
+        # Extract year filter
         filters = plan.get("filters", {})
         if isinstance(filters, dict) and filters.get("min_year"):
             try:
