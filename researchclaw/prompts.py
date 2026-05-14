@@ -1633,6 +1633,7 @@ _DEFAULT_STAGES: dict[str, dict[str, Any]] = {
             "Shortlist:\n{shortlist}"
         ),
         "json_mode": True,
+        "max_tokens": 16384,
     },
     "knowledge_extract_retry": {
         "system": "You extract structured research evidence from academic papers. You MUST extract every field.",
@@ -1646,6 +1647,7 @@ _DEFAULT_STAGES: dict[str, dict[str, Any]] = {
             "Shortlist:\n{shortlist}"
         ),
         "json_mode": True,
+        "max_tokens": 16384,
     },
     # ── Phase C: Knowledge Synthesis ─────────────────────────────────────
     "synthesis": {

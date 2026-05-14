@@ -924,94 +924,164 @@ def _execute_knowledge_extract(
     if llm is not None:
         _pm = prompts or PromptManager()
         _overlay = _get_evolution_overlay(run_dir, "knowledge_extract")
-        sp = _pm.for_stage("knowledge_extract", evolution_overlay=_overlay, shortlist=shortlist)
-        resp = _chat_with_prompt(
-            llm,
-            sp.system,
-            sp.user,
-            json_mode=sp.json_mode,
-            max_tokens=sp.max_tokens,
-        )
-        payload = _safe_json_loads(resp.content, {})
-        if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
-            cards = [item for item in payload["cards"] if isinstance(item, dict)]
-        # Retry once with stricter prompt if LLM returned empty cards
-        if not cards:
-            _retry_sp = _pm.for_stage(
-                "knowledge_extract_retry",
-                evolution_overlay=_overlay,
-                shortlist=shortlist,
+
+        # --- Batch processing: split papers into chunks of BATCH_SIZE ---
+        # Avoids max_tokens truncation (was 4096, now 16384 per batch)
+        _BATCH_SIZE = 5
+        _all_rows = _parse_jsonl_rows(shortlist)
+        _papers = [r for r in _all_rows if isinstance(r, dict)]
+        _batches = [
+            _papers[i:i + _BATCH_SIZE]
+            for i in range(0, len(_papers), _BATCH_SIZE)
+        ]
+
+        if not _batches:
+            _batches = [[]]  # safety: at least one empty batch to trigger fallback
+
+        for _batch_idx, _batch_papers in enumerate(_batches):
+            if not _batch_papers:
+                continue
+            # Build batch-specific shortlist string
+            _batch_lines = "\n".join(
+                json.dumps(p, default=str) for p in _batch_papers
             )
-            _retry_resp = _chat_with_prompt(
+            _batch_shortlist = _batch_lines
+            if _verification_note:
+                _batch_shortlist += "\n" + _verification_note
+            if _web_context_part:
+                _batch_shortlist += _web_context_part
+
+            sp = _pm.for_stage(
+                "knowledge_extract", evolution_overlay=_overlay,
+                shortlist=_batch_shortlist,
+            )
+            resp = _chat_with_prompt(
                 llm,
-                _retry_sp.system,
-                _retry_sp.user,
-                json_mode=True,
+                sp.system,
+                sp.user,
+                json_mode=sp.json_mode,
                 max_tokens=sp.max_tokens,
             )
-            _retry_payload = _safe_json_loads(_retry_resp.content, {})
-            if isinstance(_retry_payload, dict) and isinstance(
-                _retry_payload.get("cards"), list
-            ):
-                cards = [
-                    item
-                    for item in _retry_payload["cards"]
-                    if isinstance(item, dict)
-                ]
-            if cards:
-                logger.info(
-                    "Stage 06: Retry succeeded — extracted %d cards", len(cards)
+            payload = _safe_json_loads(resp.content, {})
+            batch_cards: list[dict[str, Any]] = []
+            if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
+                batch_cards = [item for item in payload["cards"] if isinstance(item, dict)]
+
+            # Retry once with stricter prompt if batch returned empty
+            if not batch_cards:
+                _retry_sp = _pm.for_stage(
+                    "knowledge_extract_retry",
+                    evolution_overlay=_overlay,
+                    shortlist=_batch_shortlist,
                 )
+                _retry_resp = _chat_with_prompt(
+                    llm,
+                    _retry_sp.system,
+                    _retry_sp.user,
+                    json_mode=True,
+                    max_tokens=_retry_sp.max_tokens,
+                )
+                _retry_payload = _safe_json_loads(_retry_resp.content, {})
+                if isinstance(_retry_payload, dict) and isinstance(
+                    _retry_payload.get("cards"), list
+                ):
+                    batch_cards = [
+                        item for item in _retry_payload["cards"]
+                        if isinstance(item, dict)
+                    ]
+                if batch_cards:
+                    logger.info(
+                        "Stage 06 batch %d/%d: retry succeeded — %d cards",
+                        _batch_idx + 1, len(_batches), len(batch_cards),
+                    )
+
+            cards.extend(batch_cards)
+            logger.info(
+                "Stage 06 batch %d/%d: %d papers → %d cards",
+                _batch_idx + 1, len(_batches), len(_batch_papers), len(batch_cards),
+            )
+
     if not cards:
-        # Fallback: extract real data from paper records instead of template placeholders.
-        # Each paper in the shortlist has title, abstract, url, cite_key, and scores.
-        # We build cards with actual paper content — never "Template" strings.
+        # Fallback: parse abstract structure with basic NLP heuristics.
+        # Many academic abstracts follow the pattern:
+        #   [background/problem] ... "We propose" / "In this paper" [method] ...
+        #   "Experiments on" / "Results show" [findings] ... "However" [limitations]
         rows = _parse_jsonl_rows(shortlist)
         logger.warning(
             "Stage 06: LLM extraction produced no cards (%d shortlist rows). "
-            "Building cards from paper metadata as fallback.",
+            "Building cards from paper metadata with NLP fallback.",
             len(rows),
         )
+        _SECTION_MARKERS = [
+            (["we propose", "in this paper", "our approach", "our method",
+              "we present", "we introduce", "to address", "this paper presents"],
+             "method_start"),
+            (["experiment", "result", "evaluation", "we evaluate", "we test",
+              "our experiments", "we conduct", "performance of", "achieving"],
+             "findings_start"),
+            (["however", "limitation", "future work", "we acknowledge",
+              "despite", "although", "our method does not"],
+             "limitations_start"),
+        ]
+
+        def _segment_abstract(text: str) -> dict[str, str]:
+            """Basic NLP segmentation of an abstract into structured fields."""
+            text_lower = text.lower()
+            breaks: list[tuple[int, str]] = []
+            for markers, label in _SECTION_MARKERS:
+                for m in markers:
+                    pos = text_lower.find(m)
+                    if pos >= 0:
+                        breaks.append((pos, label))
+                        break  # first marker of this type wins
+            breaks.sort()
+            if not breaks:
+                # Can't segment — treat as problem+method only
+                return {"problem": text[:300], "method": text[100:400],
+                        "findings": "", "limitations": ""}
+
+            segments: dict[str, str] = {"problem": "", "method": "", "findings": "", "limitations": ""}
+            # Pre-first-break region = problem
+            first_pos = breaks[0][0]
+            segments["problem"] = text[:min(first_pos, 400)].strip()
+            # Assign each region to its label
+            for i, (pos, label) in enumerate(breaks):
+                end = breaks[i + 1][0] if i + 1 < len(breaks) else min(pos + 500, len(text))
+                segment = text[pos:end].strip()
+                if "method" in label:
+                    segments["method"] = segment[:400]
+                elif "findings" in label:
+                    segments["findings"] = segment[:400]
+                elif "limitations" in label:
+                    segments["limitations"] = segment[:300]
+            return segments
+
         for idx, paper in enumerate(rows[:6]):
             title = str(paper.get("title", f"Paper {idx + 1}"))
             abstract = str(paper.get("abstract", "")).strip()
             cite_key = str(paper.get("cite_key", ""))
             url = str(paper.get("url", ""))
-            # Use real abstract content if available; otherwise leave fields empty
-            # rather than writing misleading "Template" placeholder text.
             if abstract and abstract not in ("None", ""):
-                method = abstract[:300] if len(abstract) > 300 else abstract
-                findings = abstract[:200] if len(abstract) > 200 else abstract
-                data = ""
-                limitations = ""
+                seg = _segment_abstract(abstract)
             else:
-                method = ""
-                findings = ""
-                data = ""
-                limitations = ""
-                if not abstract or abstract in ("None", ""):
-                    logger.debug(
-                        "Stage 06 fallback: paper '%s' has no abstract — "
-                        "card fields left empty",
-                        title[:80],
-                    )
+                seg = {"problem": "", "method": "", "findings": "", "limitations": ""}
             cards.append(
                 {
                     "card_id": f"card-{idx + 1}",
                     "title": title,
-                    "problem": (
+                    "problem": seg["problem"] or (
                         abstract[:200] if abstract and abstract not in ("None", "")
                         else f"Related to: {config.research.topic}"
                     ),
-                    "method": method,
-                    "data": data,
+                    "method": seg["method"] or (abstract[:300] if abstract else ""),
+                    "data": "",
                     "metrics": "",
-                    "findings": findings,
-                    "limitations": limitations,
+                    "findings": seg["findings"] or (abstract[:200] if abstract else ""),
+                    "limitations": seg["limitations"],
                     "citation": url,
                     "cite_key": cite_key,
                     "data_quality": "degraded",
-                    "source": "fallback",
+                    "source": "fallback_nlp",
                 }
             )
     for idx, card in enumerate(cards):
