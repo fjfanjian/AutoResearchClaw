@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+from researchclaw.utils.network import bypass_proxy
 from researchclaw.web._ssrf import check_url_ssrf
 
 try:
@@ -141,8 +142,9 @@ class PDFExtractor:
             req = Request(url, headers={
                 "User-Agent": "ResearchClaw/0.5 (Academic Research Bot)"
             })
-            resp = urlopen(req, timeout=30)  # noqa: S310
-            data = resp.read()
+            with bypass_proxy():
+                resp = urlopen(req, timeout=30)  # noqa: S310
+                data = resp.read()
 
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(data)

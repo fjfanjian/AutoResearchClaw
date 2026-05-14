@@ -21,6 +21,8 @@ from typing import Any
 from urllib.request import Request, urlopen, ProxyHandler, build_opener, HTTPSHandler
 from urllib.parse import quote_plus
 
+from researchclaw.utils.network import bypass_proxy
+
 # TLS 1.2 context for DuckDuckGo fallback — TLS 1.3 connections to DDG/CDN
 # IPs are routinely reset by network intermediaries (ECH interference),
 # while TLS 1.2 (cleartext SNI) passes through.
@@ -197,7 +199,8 @@ class WebSearchClient:
         if exclude_domains:
             kwargs["exclude_domains"] = exclude_domains
 
-        response = client.search(**kwargs)
+        with bypass_proxy():
+            response = client.search(**kwargs)
         elapsed = time.monotonic() - t0
 
         results = []
@@ -236,9 +239,10 @@ class WebSearchClient:
         })
 
         try:
-            opener = _get_ddg_opener()
-            resp = opener.open(req, timeout=15)
-            html = resp.read().decode("utf-8", errors="replace")
+            with bypass_proxy():
+                opener = _get_ddg_opener()
+                resp = opener.open(req, timeout=15)
+                html = resp.read().decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             elapsed = time.monotonic() - t0
             logger.warning("DuckDuckGo search failed: %s", exc)
