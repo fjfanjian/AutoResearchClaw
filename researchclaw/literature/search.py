@@ -145,6 +145,26 @@ def search_papers(
         cache_source = (
             "semantic_scholar" if src_lower in ("semantic_scholar", "s2") else src_lower
         )
+
+        # --- Cache-first: check before every API call ---
+        # This is the most impactful optimisation — a single run may issue
+        # the same (query, source) pair from different stages (lit-collect +
+        # novelty-check); we must not re-fetch what we already have.
+        papers: list[Paper] | None = None
+        cached = cache_get(query, cache_source, limit)
+        if cached:
+            papers = _dicts_to_papers(cached)
+            cache_hits += len(papers)
+            source_stats.setdefault(cache_source, 0)
+            source_stats[cache_source] += len(papers)
+            logger.info(
+                "[cache] HIT %s → %d papers for %r (skipping API)",
+                cache_source, len(papers), query[:80],
+            )
+            all_papers.extend(papers)
+            continue  # ← skip API call entirely
+
+        # --- Cache miss: call real API ---
         try:
             if src_lower == "openalex":
                 papers = search_openalex(
@@ -156,7 +176,7 @@ def search_papers(
                 cache_put(query, "openalex", limit, _papers_to_dicts(papers))
                 source_stats["openalex"] = len(papers)
                 logger.info(
-                    "OpenAlex returned %d papers for %r", len(papers), query
+                    "OpenAlex returned %d papers for %r", len(papers), query[:80]
                 )
                 time.sleep(0.5)
 
@@ -171,9 +191,8 @@ def search_papers(
                 cache_put(query, "semantic_scholar", limit, _papers_to_dicts(papers))
                 source_stats["semantic_scholar"] = len(papers)
                 logger.info(
-                    "Semantic Scholar returned %d papers for %r", len(papers), query
+                    "Semantic Scholar returned %d papers for %r", len(papers), query[:80]
                 )
-                # Rate-limit gap before next source
                 time.sleep(1.0)
 
             elif src_lower == "arxiv":
@@ -181,7 +200,7 @@ def search_papers(
                 all_papers.extend(papers)
                 cache_put(query, "arxiv", limit, _papers_to_dicts(papers))
                 source_stats["arxiv"] = len(papers)
-                logger.info("arXiv returned %d papers for %r", len(papers), query)
+                logger.info("arXiv returned %d papers for %r", len(papers), query[:80])
 
             else:
                 logger.warning("Unknown literature source: %s (skipped)", src)
@@ -194,19 +213,23 @@ def search_papers(
             urllib.error.URLError,
         ):
             logger.warning(
-                "[rate-limit] Source %s failed for %r — trying cache", src, query
+                "[rate-limit] Source %s failed for %r — trying cache", src, query[:80]
             )
-            cached = cache_get(query, cache_source, limit)
+            # Cache was already checked above, so this is a second attempt
+            # for the unlikely case where the cache was populated between
+            # our initial check and the exception.
+            if not cached:
+                cached = cache_get(query, cache_source, limit)
             if cached:
                 papers = _dicts_to_papers(cached)
                 all_papers.extend(papers)
                 cache_hits += len(papers)
                 logger.info(
-                    "[cache] HIT: %d papers for %s/%r", len(papers), src, query
+                    "[cache] HIT (fallback): %d papers for %s/%r", len(papers), src, query[:80]
                 )
             else:
                 logger.warning(
-                    "No cache available for %s/%r — skipping", src, query
+                    "No cache available for %s/%r — skipping", src, query[:80]
                 )
 
     # Summary log
@@ -241,11 +264,24 @@ def search_papers_multi_query(
 ) -> list[Paper]:
     """Run multiple queries and return deduplicated union.
 
-    Adds a delay between queries to respect rate limits.
+    Adds a delay between queries to respect rate limits.  Near-duplicate
+    queries are merged to avoid wasting API calls on redundant terms.
     """
+    # --- Merge semantically similar queries before sending ---
+    # Two queries are considered redundant if their keyword sets share
+    # >= 70% Jaccard similarity.  When merged, we pick the shorter query
+    # (broader → more results from the API).
+    merged_queries = _merge_similar_queries(queries)
+    if len(merged_queries) < len(queries):
+        logger.info(
+            "[merge] Reduced %d queries → %d (%.0f%% dedup)",
+            len(queries), len(merged_queries),
+            (1 - len(merged_queries) / len(queries)) * 100,
+        )
+
     all_papers: list[Paper] = []
 
-    for i, q in enumerate(queries):
+    for i, q in enumerate(merged_queries):
         if i > 0:
             time.sleep(inter_query_delay)
         results = search_papers(
@@ -257,11 +293,57 @@ def search_papers_multi_query(
             deduplicate=False,  # we dedup globally below
         )
         all_papers.extend(results)
-        logger.info("Query %d/%d %r → %d papers", i + 1, len(queries), q, len(results))
+        logger.info("Query %d/%d %r → %d papers", i + 1, len(merged_queries), q[:60], len(results))
 
     deduped = _deduplicate(all_papers)
     deduped.sort(key=lambda p: (p.citation_count, p.year), reverse=True)
     return deduped
+
+
+# ------------------------------------------------------------------
+# Query merging helpers
+# ------------------------------------------------------------------
+
+def _query_keywords(q: str) -> set[str]:
+    """Extract normalized keywords from a query string."""
+    return set(re.findall(r"[a-z0-9]{3,}", q.lower()))
+
+
+def _merge_similar_queries(queries: list[str], threshold: float = 0.7) -> list[str]:
+    """Merge near-duplicate queries to reduce redundant API calls.
+
+    Two queries are considered redundant if their keyword Jaccard
+    similarity exceeds *threshold*.  The shorter query is preferred
+    (it is typically broader and returns more results).
+    """
+    if len(queries) <= 1:
+        return list(queries)
+
+    kw_sets = [(q, _query_keywords(q)) for q in queries]
+    merged: list[str] = []
+    absorbed: set[int] = set()
+
+    for i, (qi, kwi) in enumerate(kw_sets):
+        if i in absorbed:
+            continue
+        for j in range(i + 1, len(kw_sets)):
+            if j in absorbed:
+                continue
+            qj, kwj = kw_sets[j]
+            union = kwi | kwj
+            if not union:
+                continue
+            jaccard = len(kwi & kwj) / len(union)
+            if jaccard >= threshold:
+                # Keep the shorter query (broader reach)
+                absorbed.add(j)
+                logger.debug(
+                    "[merge] Absorbed %r → %r (Jaccard=%.2f)", qj[:50], qi[:50], jaccard
+                )
+        merged.append(qi)
+
+    # Preserve original order
+    return [q for i, q in enumerate(queries) if i not in absorbed]
 
 
 # ------------------------------------------------------------------

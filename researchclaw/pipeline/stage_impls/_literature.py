@@ -40,41 +40,38 @@ logger = logging.getLogger(__name__)
 
 
 def _expand_search_queries(queries: list[str], topic: str) -> list[str]:
-    """Expand search queries for broader literature coverage.
+    """Expand search queries for broader coverage (minimal expansion).
 
-    Generates additional queries by extracting key phrases from the topic
-    and creating focused sub-queries. This ensures we find papers even when
-    the original queries are too narrow or specific for arXiv.
+    With the improved Stage-03 prompt already producing domain-anchored
+    queries, expansion is kept to a single broad topic-derived query to
+    fill any obvious gaps.  The old suffix variants (survey, benchmark,
+    comparison) have been removed because they multiply API calls without
+    adding meaningful diversity.
     """
     expanded = list(queries)  # keep originals
     seen = {q.lower().strip() for q in queries}
 
-    # Extract key phrases from topic by splitting on common delimiters
-    # e.g. "Comparing A, B, and C on X with Y" → ["A", "B", "C", "X", "Y"]
     topic_words = topic.split()
 
-    # Generate shorter, broader queries from the topic
-    if len(topic_words) > 5:
-        # First 5 words as a broader query
-        broad = " ".join(topic_words[:5])
-        if broad.lower().strip() not in seen:
+    # One broad query from the first meaningful phrase (skip leading fluff)
+    _skip_prefixes = {
+        "investigation", "investigating", "exploring", "towards",
+        "toward", "study", "studies", "analysis", "review",
+        "comprehensive", "novel", "method", "approach",
+        "into", "in", "of", "for", "and", "or", "the", "to", "by",
+        "mitigating", "mitigation",
+    }
+    meaningful_start = 0
+    for i, w in enumerate(topic_words):
+        if w.lower().rstrip(".,;:") not in _skip_prefixes:
+            meaningful_start = i
+            break
+    broad_words = topic_words[meaningful_start:meaningful_start + 5]
+    if len(broad_words) >= 3:
+        broad = " ".join(broad_words)
+        if broad.lower().strip() not in seen and len(broad) > 10:
             expanded.append(broad)
             seen.add(broad.lower().strip())
-
-        # Last 5 words as another perspective
-        tail = " ".join(topic_words[-5:])
-        if tail.lower().strip() not in seen:
-            expanded.append(tail)
-            seen.add(tail.lower().strip())
-
-    # Add "survey" and "benchmark" variants of the topic
-    for suffix in ("survey", "benchmark", "comparison"):
-        # Take first 4 content words + suffix
-        short_topic = " ".join(topic_words[:4])
-        variant = f"{short_topic} {suffix}"
-        if variant.lower().strip() not in seen:
-            expanded.append(variant)
-            seen.add(variant.lower().strip())
 
     return expanded
 
@@ -425,7 +422,7 @@ def _execute_literature_collect(
         )
         papers = search_papers_multi_query(
             expanded_queries,
-            limit_per_query=40,
+            limit_per_query=20,
             year_min=year_min,
             s2_api_key=config.llm.s2_api_key,
         )
