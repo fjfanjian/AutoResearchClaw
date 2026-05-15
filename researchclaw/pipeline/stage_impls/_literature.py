@@ -728,7 +728,7 @@ def _execute_literature_collect(
 
 
 _MAX_ABSTRACT_LEN = 800  # Truncate long abstracts to reduce token usage
-_MAX_CANDIDATES_CHARS = 30_000  # Cap total candidates text sent to LLM
+_MAX_CANDIDATES_CHARS = 60_000  # Cap total candidates text sent to LLM
 
 
 def _execute_literature_screen(
@@ -776,6 +776,12 @@ def _execute_literature_screen(
             row["abstract"] = abstract[:_MAX_ABSTRACT_LEN] + "..."
         # Strip authors list — not needed for screening and inflates tokens
         row.pop("authors", None)
+
+    # Sort by keyword overlap DESC so the most relevant papers survive truncation.
+    # Without this, the LLM only sees whichever papers happen to be first in the
+    # source-ordered list — often the least relevant ones (avg strong KW 0.7 vs
+    # 3.1 in the truncated tail).
+    filtered_rows.sort(key=lambda r: r.get("keyword_overlap", 0), reverse=True)
 
     # Rebuild candidates_text from filtered rows
     candidates_text = "\n".join(
