@@ -37,6 +37,13 @@ config_run*.yaml
 # Literature search cache
 .researchclaw_cache/
 
+# Code search experiment cache & generated problem tree
+code_search_cache/
+problem_tree.md
+
+# Pipeline stage outputs at repository root
+stage-*/
+
 # Playwright MCP logs
 .playwright-mcp/
 
